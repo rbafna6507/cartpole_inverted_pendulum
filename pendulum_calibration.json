@@ -1,0 +1,26 @@
+{
+  "pendulum": {
+    "length_mm": 100.0,
+    "mass_g": 11.05
+  },
+  "end_point_masses": {
+    "count": 2,
+    "mass_each_g": 5.85
+  },
+  "si": {
+    "pendulum_length_m": 0.1,
+    "pendulum_mass_kg": 0.01105,
+    "end_point_mass_each_kg": 0.00585,
+    "cart_maximum_travel_m": 0.4,
+    "encoder_average_sample_interval_s": 0.002
+  },
+  "assumptions": [
+    "The supplied point-mass value 5.85 is in grams and applies to each of the two end weights."
+  ],
+  "cart": {
+    "maximum_travel_mm": 400.0
+  },
+  "encoder": {
+    "average_sample_interval_ms": 2.0
+  }
+}
