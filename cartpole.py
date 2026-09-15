@@ -379,7 +379,7 @@ HELP = """
   mag         AS5600 magnet health (status + AGC)
   stat        one-shot state dump
   params      list every live-tunable parameter
-  set k v     change one, e.g.  set leff 0.185   /   set pw 9
+  set k v     change one, e.g.  set leff 0.127   /   set pw 9
   get k       read one back
   rate hz     telemetry rate (default 100, try 250 for fast captures)
   log         path of the CSV being written right now

@@ -1,0 +1,42 @@
+{
+  "hardware": {
+    "motor": "NEMA 17",
+    "supply_voltage_v": 24.0,
+    "driver": "Big Easy Driver / A4988",
+    "motor_full_steps_per_rev": 200,
+    "microsteps": 16,
+    "belt_pitch_mm": 2.0,
+    "pulley_teeth": 60,
+    "cart_steps_per_mm": 26.6666667,
+    "rail_total_travel_m": 0.4,
+    "startup_position": "physical center",
+    "physical_limit_from_center_m": 0.2,
+    "soft_braking_start_from_center_m": 0.15,
+    "software_fault_limit_from_center_m": 0.19
+  },
+  "measured_pendulum": {
+    "period_s": 0.716,
+    "frequency_hz": 1.397,
+    "effective_length_m": 0.127,
+    "damping_ratio": 0.027,
+    "quality_factor_approx": 19.0,
+    "angular_damping_coefficient_per_s_approx": 0.47,
+    "encoder_sample_interval_s": 0.002
+  },
+  "controller_defaults": {
+    "control_rate_hz": 1000,
+    "estimator_bandwidth_hz": 18.0,
+    "swing_energy_gain_m_per_s2": 1.0,
+    "swing_max_acceleration_m_per_s2": 5.0,
+    "balance_max_acceleration_m_per_s2": 18.0,
+    "max_cart_speed_m_per_s": 0.7,
+    "catch_angle_rad": 0.5,
+    "catch_rate_rad_per_s": 6.0,
+    "giveup_angle_rad": 1.0,
+    "balance_pole_frequency_rad_per_s": 9.0,
+    "balance_damping_ratio": 0.8,
+    "cart_poles_per_s": [-1.5, -2.0],
+    "state_feedback_gain": [-27.2783, -2.81044, -3.14587, -4.22945]
+  },
+  "safety_note": "Without limit switches, rail position is inferred from commanded steps. A skipped step makes that estimate wrong. Validate manual motion and balance-only mode before automatic swing-up."
+}
