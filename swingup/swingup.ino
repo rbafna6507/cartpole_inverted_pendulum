@@ -1,5 +1,5 @@
 // ============================================================================
-//  cartpole_swingup_balance_esp32.ino -- calibrated 60T / 400 mm version
+//  cartpole_swingup_balance_esp32.ino -- 20T / 300 mm travel, centered startup, jerk-limited cart
 //
 //  PARTS
 //    encoder : AS5600 module (12-bit, I2C, 3.3V, 23x23mm)
@@ -21,13 +21,13 @@
 //       has very little torque left on 12V, and the cart wants that RPM.
 //
 //  PINOUT
-//    25 cart STEP    26 cart DIR
-//    16 Z1   STEP    17 Z1   DIR
-//    18 Z2   STEP    19 Z2   DIR
+//    18 cart STEP    19 cart DIR
+//    25 Z1   STEP    26 Z1   DIR
+//    16 Z2   STEP    17 Z2   DIR  (RX2 / TX2)
 //    27 ENABLE for ALL THREE drivers (active low)
 //    21 SDA          22 SCL          AS5600 on 3V3, DIR pin -> GND
 //    MS1/MS2/MS3 are left UNCONNECTED on all three drivers. The BED pulls
-//    them high, which is its 1/16 default: 26.667 steps/mm on a 60T GT2 belt,
+//    them high, which is its 1/16 default: 80 steps/mm on a 20T GT2 belt,
 //    640 steps/mm on a 5 mm ball-screw lead.
 //
 //  WHY ACCELERATION IS THE CONTROL INPUT
@@ -39,11 +39,10 @@
 //    mass, belt friction and motor torque never enter the model, as long as
 //    you don't lose steps.
 //
-//  IMPORTANT: ball screws back-drive
-//    SFU1605 is efficient enough to back-drive under load. Since all three
-//    ENABLE lines share GPIO27, de-energizing to stop would drop the rail.
-//    So 'stop' zeroes all velocities but KEEPS the motors energized. 'off'
-//    de-energizes and is a separate, deliberate command.
+//  STOP / STARTUP
+//    GPIO27 is active-low ENABLE shared by all drivers. Startup, stop and
+//    faults disable all drivers. Support the height assembly when disabled.
+//    auto, bal, manual, v, zv or on explicitly enable the drivers.
 //
 //  PROTOCOL (921600 baud, newline terminated). See cartpole.py for the host.
 //    host -> board                      board -> host
@@ -53,7 +52,7 @@
 //      v <m/s>         cart velocity      # <human readable log>
 //      zv <mm/s>       both screws        ! <error>
 //      zstop
-//      stop            e-stop, stay energized
+//      stop            stop pulses and disable all drivers
 //      off / on        de-energize / energize
 //      home            call this x = 0
 //      zhome           call this z = 0
@@ -65,16 +64,20 @@
 
 #include <Arduino.h>
 #include <Wire.h>
+#include "driver/gpio.h"
+#include "cart_motion.h"
+#include "rail_recovery.h"
+#include "swing_controller.h"
 #include "soc/soc.h"        // REG_WRITE
 #include "soc/gpio_reg.h"   // GPIO_OUT_W1TS_REG / GPIO_OUT_W1TC_REG
 
 // ============================== PINS ========================================
-#define PIN_CART_STEP   25
-#define PIN_CART_DIR    26
-#define PIN_Z1_STEP     16
-#define PIN_Z1_DIR      17
-#define PIN_Z2_STEP     18
-#define PIN_Z2_DIR      19
+#define PIN_CART_STEP   18
+#define PIN_CART_DIR    19
+#define PIN_Z1_STEP     25
+#define PIN_Z1_DIR      26
+#define PIN_Z2_STEP     16
+#define PIN_Z2_DIR      17
 #define PIN_EN_ALL      27        // shared ENABLE, active LOW
 #define PIN_SDA         21
 #define PIN_SCL         22
@@ -88,72 +91,63 @@
 
 // ========================== MECHANICS =======================================
 // Big Easy Driver factory default is 1/16 with MS pins unconnected.
-// On the measured 60T GT2 pulley this is 26.667 steps/mm.
+// On the 20T GT2 pulley this is 80 steps/mm.
 // If you ever want more headroom without touching the timer: jumper MS3 to GND
 // for 1/8 (40 steps/mm), or MS1+MS3 for 1/4 (20 steps/mm).
-#define CART_MICROSTEPS 16        // MS pins floating -> BED default
+#define CART_MICROSTEPS cart_hardware::microsteps        // MS pins floating -> BED default
 #define Z_MICROSTEPS    16        // same
-#define MOTOR_STEPS_REV 200       // 1.8 deg
-#define PULLEY_TEETH    60        // measured hardware: GT2 60T = 120 mm/rev
-#define BELT_PITCH_MM   2.0f
+#define MOTOR_STEPS_REV cart_hardware::motor_steps       // 1.8 deg
+#define PULLEY_TEETH    cart_hardware::pulley_teeth        // measured hardware: GT2 20T = 40 mm/rev
+#define BELT_PITCH_MM   cart_hardware::belt_pitch_mm
 #define Z_LEAD_MM       5.0f      // SFU1605
 
 static const float CART_STEPS_PER_M =
-    (MOTOR_STEPS_REV * CART_MICROSTEPS) / (PULLEY_TEETH * BELT_PITCH_MM * 1e-3f);
+    cart_hardware::steps_per_m;
 static const float Z_STEPS_PER_MM =
     (MOTOR_STEPS_REV * Z_MICROSTEPS) / Z_LEAD_MM;
 
 #define GRAV            9.81f
 #define CTRL_HZ         1000
-// The A4988 needs >=1 us of STEP high AND >=1 us low, so the DDS spends one
-// timer tick high and at least one low: max step rate is ISR_HZ/2.
-//   80 kHz -> 40 k steps/s -> 0.50 m/s ->  750 rpm
-//  120 kHz -> 60 k steps/s -> 0.75 m/s -> 1125 rpm
-//  150 kHz -> 75 k steps/s -> 0.94 m/s -> 1406 rpm
-// 120 kHz is an 8.3 us period and the ISR costs ~1.5 us, so roughly 18% of one
-// core. This is the aggressive setting. If serial drops characters, the board
-// resets, or 'stat' shows loop time climbing past ~250 us, back off to 80000.
-// The motor itself holds torque to around 1200-1500 rpm on 24V, so past about
-// 150 kHz you stop gaining anything real.
-#define ISR_HZ          120000    // 3-channel step DDS; max rate = ISR_HZ/2
+// An exact 8 us timer period avoids the old 120 kHz / integer-microsecond
+// mismatch (which actually ran at 125 kHz). At 20T / 1:16, 1125 RPM (0.75 m/s) needs
+// 60,000 steps/s; the DDS ceiling here is 62,500 steps/s = 0.78125 m/s.
+#define ISR_HZ          cart_hardware::isr_hz
 static const float DT = 1.0f / CTRL_HZ;
 
 // Hard ceiling on cart speed, derived rather than guessed. Ask for more than
 // this and the pulse generator clamps while the controller keeps believing the
 // number it was given - so we clamp loudly at the point of entry instead.
-static const float VMAX_CEIL = (ISR_HZ * 0.5f) / CART_STEPS_PER_M;
+static const float VMAX_CEIL = cart_hardware::max_speed;
 
 #define MANUAL_TIMEOUT_MS 250     // 'v' command watchdog: no news = stop
 
 // ===================== LIVE-TUNABLE PARAMETERS ==============================
 // Change any of these at runtime with  set <name> <value>  - no reflash.
-// Free-decay calibration, 2026-09-15: T=0.716 s, Leff=0.127 m,
-// zeta~=0.027, Q~=19.  Leff (not the ruler length) belongs in the plant.
-float p_leff    = 0.127f;
-float p_pw      = 9.0f;    // balance closed-loop pendulum pair, rad/s
-float p_pz      = 0.80f;
-float p_pc1     = -1.5f;   // slow cart-centering poles (negative)
-float p_pc2     = -2.0f;
-// SPEED PROFILE: the defaults below are the deliberately-crawling bring-up
-// values, so the first power-up cannot hurt anything. Send 'fast' to switch to
-// the values the controller actually needs, 'slow' to come back. A cart-pole
-// physically cannot balance on the slow profile - the cart has to be able to
-// accelerate under a falling pole, and 1 m/s^2 is nowhere near enough. Slow is
-// for checking directions, distances and wiring, nothing more.
-float p_vmax    = 0.05f;   // m/s; slow-profile boot value
-float p_amax_s  = 0.5f;    // m/s^2 during swing-up
-float p_amax_b  = 1.0f;    // m/s^2 while balancing
-float p_ke      = 1.0f;    // m/s^2 per unit normalized energy error
-// Continuous x/v feedback can cancel the energy pump on this short rail.
-// The independent 150 mm braking envelope recentres instead.
-float p_kpx     = 0.0f;
-float p_kdx     = 0.0f;
-float p_catch_a = 0.50f;   // rad: nonlinear balancer capture region
-float p_catch_r = 6.0f;    // rad/s
-float p_giveup  = 1.00f;   // rad: return to energy shaping if capture fails
-float p_rail    = 0.200f;  // m, startup centre to either physical end
-float p_bw      = 18.0f;   // Hz, angle/rate estimator bandwidth
-float p_vman    = 0.02f;   // m/s, manual jog speed
+// Current 175 mm / 14.2 g configuration: L_eff=0.166 m from 33
+// low-angle cycles in three captures. See analysis/fit_175mm.py.
+// Shared defaults and equations keep firmware and simulation in agreement.
+swing_control::Parameters controller;
+float &p_leff = controller.leff;
+float &p_pw = controller.pw;
+float &p_pz = controller.pz;
+float &p_pc1 = controller.pc1;
+float &p_pc2 = controller.pc2;
+float &p_vmax = controller.vmax;
+float &p_amax_s = controller.amax_s;
+float &p_amax_b = controller.amax_b;
+float &p_jmax = controller.jmax;
+float &p_amax_m = controller.amax_m;
+float &p_jmax_m = controller.jmax_m;
+float &p_ke = controller.ke;
+float &p_kpx = controller.kpx;
+float &p_kdx = controller.kdx;
+float &p_phase_soft = controller.phase_soft;
+float &p_catch_a = controller.catch_a;
+float &p_catch_r = controller.catch_r;
+float &p_giveup = controller.giveup;
+float &p_rail = controller.rail;
+float &p_bw = controller.bw;
+float &p_vman = controller.vman;
 float p_zvmax   = 2.0f;    // mm/s
 float p_zamax   = 20.0f;   // mm/s^2
 float p_ztravel = 100.0f;  // mm of usable screw travel above z=0
@@ -166,7 +160,8 @@ static const Param PARAMS[] = {
   {"leff",&p_leff,true},   {"pw",&p_pw,true},      {"pz",&p_pz,true},
   {"pc1",&p_pc1,true},     {"pc2",&p_pc2,true},
   {"vmax",&p_vmax,false},  {"amax_s",&p_amax_s,false},{"amax_b",&p_amax_b,false},
-  {"ke",&p_ke,false},      {"kpx",&p_kpx,false},   {"kdx",&p_kdx,false},
+  {"amax_m",&p_amax_m,false},{"jmax_m",&p_jmax_m,false},
+  {"phase_soft",&p_phase_soft,false},{"jmax",&p_jmax,false},  {"ke",&p_ke,false},      {"kpx",&p_kpx,false},   {"kdx",&p_kdx,false},
   {"catch_a",&p_catch_a,false},{"catch_r",&p_catch_r,false},
   {"giveup",&p_giveup,false},{"rail",&p_rail,false},{"bw",&p_bw,false},
   {"vman",&p_vman,false},  {"zvmax",&p_zvmax,false},{"zamax",&p_zamax,false},
@@ -189,6 +184,7 @@ DRAM_ATTR static const uint32_t AX_MASK[N_AX] = {
 DRAM_ATTR static const uint32_t ALL_STEP_MASK =
   (1UL<<PIN_CART_STEP) | (1UL<<PIN_Z1_STEP) | (1UL<<PIN_Z2_STEP);
 
+volatile bool g_energized = false;
 volatile uint32_t ax_inc[N_AX] = {0,0,0};
 volatile int32_t  ax_pos[N_AX] = {0,0,0};
 volatile int8_t   ax_dir[N_AX] = {1,1,1};
@@ -203,6 +199,7 @@ hw_timer_t *g_timer = nullptr;
 // different register pair (GPIO_OUT1_W1TS_REG).
 void IRAM_ATTR onStepTimer() {
   REG_WRITE(GPIO_OUT_W1TC_REG, ALL_STEP_MASK);   // end pulses started last tick
+  if (!g_energized) return;
   uint32_t set = 0;
   for (int i = 0; i < N_AX; i++) {
     uint32_t inc = ax_inc[i];
@@ -217,6 +214,7 @@ void IRAM_ATTR onStepTimer() {
 static const uint8_t DIR_PIN[N_AX] = { PIN_CART_DIR, PIN_Z1_DIR, PIN_Z2_DIR };
 
 void axSetRate(int i, float steps_per_sec, bool invert) {
+  if (!g_energized) { ax_inc[i] = 0; return; }
   int8_t d = (steps_per_sec >= 0.0f) ? 1 : -1;
   if (d != ax_dir[i]) {
     ax_dir[i] = d;
@@ -234,10 +232,10 @@ void steppersInit() {
   const uint8_t outs[] = { PIN_CART_STEP, PIN_CART_DIR, PIN_Z1_STEP, PIN_Z1_DIR,
                            PIN_Z2_STEP, PIN_Z2_DIR };
   for (uint8_t p : outs) { pinMode(p, OUTPUT); digitalWrite(p, LOW); }
-  pinMode(PIN_EN_ALL, OUTPUT); digitalWrite(PIN_EN_ALL, HIGH);   // de-energized
+  // ENABLE was already driven HIGH at the first instruction in setup().
 
   // Microstepping is whatever the drivers default to (1/16). MS1/MS2/MS3 are
-  // deliberately not touched, so GPIO 32 / 33 / 13 are free for limit
+  // deliberately not touched, so GPIO 32 / 33 are free for limit
   // switches or anything else you add later.
 
 #if ESP_ARDUINO_VERSION_MAJOR >= 3
@@ -252,7 +250,6 @@ void steppersInit() {
 #endif
 }
 
-bool g_energized = false;
 void energize(bool on) {
   g_energized = on;
   digitalWrite(PIN_EN_ALL, on ? LOW : HIGH);
@@ -415,16 +412,16 @@ void encZeroBlocking() {
 }
 
 // ========================== CONTROLLER ======================================
-enum Mode { M_IDLE=0, M_MANUAL, M_SWINGUP, M_BALANCE, M_FAULT };
+enum Mode { M_IDLE=0, M_MANUAL, M_SWINGUP, M_BALANCE, M_FAULT, M_RAIL_BRAKE, M_RECENTER };
 volatile Mode mode = M_IDLE;
-const char *MODE_NAME[] = {"IDLE","MANUAL","SWINGUP","BALANCE","FAULT"};
+const char *MODE_NAME[] = {"IDLE","MANUAL","SWINGUP","BALANCE","FAULT","RAIL_BRAKE","RECENTER"};
 
 volatile float th=0, thd=0, xc=0, vc=0, acc_cmd=0, energy_n=-1;
 volatile float z_mm=0;
 volatile uint32_t loop_us=0;
 static float th_hat=0, thd_hat=0;
-static int   swing_sign=1;
-static uint32_t stall_ms=0;
+static swing_control::PumpState pump;
+static swing_control::ResponseWatch response_watch;
 static int32_t home_steps=0, zhome_steps=0;
 
 // Cross-context requests. loop() may only SET these; the control task is the
@@ -440,95 +437,55 @@ static uint32_t zero_t0 = 0;
 static float v_manual=0;
 static uint32_t v_manual_deadline=0;
 static float zv_target=0, zv_now=0;
-static bool fast_profile=false;
-
-// Two speed profiles. 'slow' is for bring-up: everything crawls, you have all
-// the time in the world to hit stop, and a wiring mistake bumps the end of the
-// rail instead of hitting it. 'fast' is what balancing actually requires.
-void profileSlow() {
-  fast_profile = false;
-  p_vmax = 0.05f; p_vman = 0.02f; p_amax_s = 0.5f; p_amax_b = 1.0f;
-  p_zvmax = 2.0f; p_zamax = 20.0f;
-}
-void profileFast() {
-  fast_profile = true;
-  // Ask for more than VMAX_CEIL and axSetRate clamps the pulse rate while the controller goes on
-  // believing the larger number - the velocity feedback term becomes fiction
-  // and the balancer computes accelerations from a cart speed that does not
-  // exist. Raise ISR_HZ only after checking driver and motor limits.
-  // 0.9 m/s is only 450 motor rpm with the 60T pulley.  It leaves abundant
-  // pulse-rate and torque margin while still giving the 127 mm pendulum enough
-  // cart authority.  Increase only after logs prove it is velocity-limited.
-  p_vmax = 0.70f; p_vman = 0.15f; p_amax_s = 5.0f; p_amax_b = 18.0f;
-  p_zvmax = 15.0f; p_zamax = 120.0f;
-}
+static int cart_brake_direction=0;
+static rail_recovery::State rail_recovery_state;
+static bool recovery_was_manual=false;
 
 // Exact pole placement. With a = -(K1*th + K2*thd + K3*x + K4*v) the closed
 // loop characteristic polynomial of this plant is
 //   s^4 + (K4 - K2/L)s^3 + (K3 - g/L - K1/L)s^2 - (g*K4/L)s - (g*K3/L)
 // Matching that to (s^2+2*z*w*s+w^2)(s-pc1)(s-pc2) inverts in closed form.
 void computeGains() {
-  float b1 = 2.0f*p_pz*p_pw, b0 = p_pw*p_pw;
-  float c1 = -(p_pc1 + p_pc2), c0 = p_pc1*p_pc2;
-  float a3 = b1 + c1;
-  float a2 = b0 + b1*c1 + c0;
-  float a1 = b1*c0 + b0*c1;
-  float a0 = b0*c0;
-  const float L = p_leff, g = GRAV;
-  K3 = -a0*L/g;
-  K4 = -a1*L/g;
-  K1 = L*K3 - g - L*a2;
-  K2 = L*(K4 - a3);
-  // K3 and K4 come out NEGATIVE and that is correct: to bring the cart back to
-  // centre you must first accelerate AWAY from centre to tip the pole inward.
-  // The system is non-minimum phase. "Fixing" those signs guarantees a fall.
+  const auto k = swing_control::gains(controller);
+  K1=k.k1; K2=k.k2; K3=k.k3; K4=k.k4;
 }
 
 // Alpha-beta tracking differentiator. Differencing a 12-bit encoder at 1 kHz
 // would give ~1.5 rad/s of quantisation hash; this smooths it and handles the
 // +-pi wrap without a glitch.
 void estimate(float theta_meas) {
-  float w = 2.0f*(float)M_PI*p_bw;
-  float err = wrapPi(theta_meas - th_hat);
-  th_hat  = wrapPi(th_hat + (thd_hat + 2.0f*w*err)*DT);
-  thd_hat += w*w*err*DT;
-  th = theta_meas;
+  swing_control::estimate(theta_meas, p_bw, DT, th_hat, thd_hat);
+  th = theta_meas;  // telemetry retains the raw encoder angle
   thd = thd_hat;
 }
 
-float balanceAccel() { return -(K1*th + K2*thd + K3*xc + K4*vc); }
-
-// Energy shaping (Astrom-Furuta). With E = 0.5*thd^2 + (g/L)cos(th),
-// dE/dt = -(a/L)*thd*cos(th), so pumping toward upright means
-//   a = k*(E - E_up)*sign(thd*cos(th))
+swing_control::Gains currentGains() { return {K1,K2,K3,K4}; }
+float balanceAccel() {
+  return swing_control::balance(currentGains(), th_hat, thd, xc, vc);
+}
 float swingAccel() {
-  float Eup = GRAV/p_leff;
-  float E   = 0.5f*thd*thd + Eup*cosf(th);
-  energy_n  = E/Eup;                        // 1.0 at the top, -1.0 hanging
-  float dE  = E/Eup - 1.0f;                  // normalized: -2 hanging, 0 up
-
-  float s = thd*cosf(th);                   // hold sign through the deadband,
-  if      (s >  0.05f) swing_sign =  1;     // otherwise it chatters at thd=0
-  else if (s < -0.05f) swing_sign = -1;
-
-  float a = p_ke*dE*(float)swing_sign;
-
-  if (fabsf(thd) < 0.08f && fabsf(dE) > 0.10f) {  // dead start: nothing to
-    stall_ms += 1000/CTRL_HZ;                     // take the sign from
-    if (stall_ms > 250) a = (float)swing_sign*p_amax_s;
-    if (stall_ms > 330) { stall_ms = 0; swing_sign = -swing_sign; }
-  } else stall_ms = 0;
-
-  a += -(p_kpx*xc + p_kdx*vc);
-  return constrain(a, -p_amax_s, p_amax_s);
+  energy_n = swing_control::energy(th_hat, thd, p_leff);
+  return swing_control::swing(controller, pump, th_hat, thd, xc, vc, DT);
 }
 
 void eStop() {
+  energize(false); // Disable immediately; ISR also suppresses pulses/counts.
   mode = M_IDLE;
+  cart_brake_direction = 0;
+  rail_recovery_state.reset(); recovery_was_manual=false;
+  pump.reset(); response_watch.armed = false;
   v_manual = 0; vc = 0; acc_cmd = 0; zv_target = 0; zv_now = 0;
   for (int i=0;i<N_AX;i++) ax_inc[i] = 0;
-  // deliberately NOT de-energizing: the ball screws back-drive and the rail
-  // would sink. Use 'off' for that, on purpose.
+  REG_WRITE(GPIO_OUT_W1TC_REG, ALL_STEP_MASK);
+}
+
+void beginRailRecovery() {
+  if (mode==M_RAIL_BRAKE || mode==M_RECENTER) return;
+  recovery_was_manual = mode==M_MANUAL;
+  rail_recovery_state.begin();
+  // Keep the startup response watch active through recovery.
+  mode=M_RAIL_BRAKE;
+  Serial.println(F("# rail recovery -> BRAKING; pendulum control paused"));
 }
 
 void controlTask(void *) {
@@ -569,34 +526,28 @@ void controlTask(void *) {
     xc = (ax_pos[AX_CART] - home_steps) / CART_STEPS_PER_M;
     z_mm = (ax_pos[AX_Z1] - zhome_steps) / Z_STEPS_PER_MM;
 
-    float rail_hard = p_rail - 0.01f, rail_soft = p_rail - 0.05f;
+    float rail_hard = p_rail - 0.01f;
     if (mode != M_IDLE && mode != M_FAULT && fabsf(xc) > rail_hard) {
       Serial.println(F("! rail limit -> FAULT"));
       mode = M_FAULT; eStop(); mode = M_FAULT;
     }
 
+    if ((mode==M_MANUAL || mode==M_SWINGUP || mode==M_BALANCE) &&
+        rail_recovery_state.atEdge(xc,p_rail)) beginRailRecovery();
+
     float a = 0.0f;
     switch (mode) {
       case M_MANUAL:
-        if (millis() > v_manual_deadline) v_manual = 0;   // key-release watchdog
-        {
-          // Ramp, don't jump. A dead-stop step to 0.15 m/s is 4,000 steps/s
-          // at 1/16, which can still make a loaded NEMA 17 lose position.
-          // A missed step silently corrupts the software-only rail position.
-          float dv = p_amax_b*DT;
-          if      (vc < v_manual - dv) vc += dv;
-          else if (vc > v_manual + dv) vc -= dv;
-          else                         vc  = v_manual;
-        }
-        if (xc >  rail_soft && vc > 0) vc = 0;
-        if (xc < -rail_soft && vc < 0) vc = 0;
-        axSetRate(AX_CART, vc*CART_STEPS_PER_M, CART_INVERT);
-        goto zaxis;
+        if ((int32_t)(millis() - v_manual_deadline) >= 0) v_manual = 0;
+        a = cart_motion::velocityAccel(vc, v_manual, p_amax_m, p_jmax_m, DT);
+        break;
 
       case M_SWINGUP:
         a = swingAccel();
-        if (fabsf(th) < p_catch_a && fabsf(thd) < p_catch_r) {
-          mode = M_BALANCE; Serial.println(F("# caught -> BALANCE"));
+        if (swing_control::canCapture(controller, currentGains(), th_hat, thd, xc, vc, acc_cmd)) {
+          mode = M_BALANCE; response_watch.armed = false;
+          a = constrain(balanceAccel(), -p_amax_b, p_amax_b);
+          Serial.println(F("# caught -> BALANCE"));
         }
         break;
 
@@ -604,34 +555,79 @@ void controlTask(void *) {
         float Eup = GRAV/p_leff;
         energy_n = (0.5f*thd*thd + Eup*cosf(th))/Eup;
         a = constrain(balanceAccel(), -p_amax_b, p_amax_b);
-        if (fabsf(th) > p_giveup) {
-          mode = M_SWINGUP; Serial.println(F("# lost it -> SWINGUP"));
+        if (fabsf(th_hat) > p_giveup) {
+          mode = M_SWINGUP;
+          Serial.println(F("# lost it -> SWINGUP"));
+        }
+        break;
+      }
+
+      case M_RAIL_BRAKE:
+      case M_RECENTER: {
+        cart_motion::State current;
+        current.velocity=vc; current.acceleration=acc_cmd;
+        current.brake_direction=cart_brake_direction;
+        const float recovery_amax=recovery_was_manual?p_amax_m:max(p_amax_s,p_amax_b);
+        const float recovery_jerk=recovery_was_manual?p_jmax_m:p_jmax;
+        if(rail_recovery_state.update(xc,current,DT)) {
+          if(recovery_was_manual) {
+            eStop(); Serial.println(F("# rail centered -> IDLE; drivers disabled"));
+            goto zaxis;
+          }
+          pump.reset();
+          mode=M_SWINGUP;
+          a=swingAccel();
+          Serial.println(F("# rail centered -> SWINGUP"));
+        } else if(rail_recovery_state.timedOut()) {
+          eStop(); mode=M_FAULT;
+          Serial.println(F("! rail recovery timeout -> FAULT"));
+          goto zaxis;
+        } else {
+          if(mode==M_RAIL_BRAKE && rail_recovery_state.phase==rail_recovery::CENTERING) {
+            mode=M_RECENTER; Serial.println(F("# rail stopped -> RECENTER"));
+          }
+          a=rail_recovery_state.demand(xc,current,p_vmax,recovery_amax,recovery_jerk,DT);
         }
         break;
       }
 
       default:                                   // IDLE / FAULT
-        vc = 0; acc_cmd = 0;
+        vc = 0; acc_cmd = 0; cart_brake_direction = 0;
         axSetRate(AX_CART, 0, CART_INVERT);
         goto zaxis;
     }
 
-    if (fabsf(xc) > rail_soft) {                 // soft rail overrides all
-      a = -(xc > 0 ? 1.0f : -1.0f)*p_amax_b;
-      // Braking envelope: do not permit an outward velocity that cannot stop
-      // before the hard boundary at the configured acceleration limit.
-      float room = max(0.0f, rail_hard - fabsf(xc));
-      float vstop = sqrtf(2.0f*p_amax_b*room);
-      if (xc > 0 && vc >  vstop) vc =  vstop;
-      if (xc < 0 && vc < -vstop) vc = -vstop;
+    {
+      cart_motion::State motion;
+      motion.velocity = vc;
+      motion.acceleration = acc_cmd;
+      motion.brake_direction = cart_brake_direction;
+      const bool use_manual_limits=mode==M_MANUAL ||
+        ((mode==M_RAIL_BRAKE || mode==M_RECENTER) && recovery_was_manual);
+      const float drive_amax = use_manual_limits ? p_amax_m :
+                               ((mode==M_RAIL_BRAKE || mode==M_RECENTER) ? max(p_amax_s,p_amax_b) :
+                                (mode == M_SWINGUP ? p_amax_s : p_amax_b));
+      const float brake_amax = use_manual_limits ? p_amax_m : max(p_amax_s, p_amax_b);
+      const float jerk = use_manual_limits ? p_jmax_m : p_jmax;
+      motion = cart_motion::advance(motion, xc, a, p_vmax, drive_amax,
+                                    brake_amax, jerk, p_rail, DT);
+      vc = motion.velocity;
+      acc_cmd = motion.acceleration;
+      cart_brake_direction = motion.brake_direction;
+      if (cart_brake_direction && (mode==M_MANUAL || mode==M_SWINGUP || mode==M_BALANCE))
+        beginRailRecovery();
+      // Only exceptional stops bypass the jerk ramp. Never keep integrating
+      // a speed the pulse generator cannot produce.
+      if (fabsf(vc) > p_vmax + 0.002f) {
+        Serial.println(F("! motion speed limit -> FAULT"));
+        eStop(); mode = M_FAULT;
+      }
+      if ((mode==M_SWINGUP || ((mode==M_RAIL_BRAKE || mode==M_RECENTER) && !recovery_was_manual)) && response_watch.fault(th, vc, DT)) {
+        Serial.println(F("! no pendulum response to cart command -> FAULT; check motor tracking and recenter"));
+        eStop(); mode = M_FAULT;
+      }
+      axSetRate(AX_CART, vc*CART_STEPS_PER_M, CART_INVERT);
     }
-
-    acc_cmd = a;
-    vc += a*DT;
-    vc = constrain(vc, -p_vmax, p_vmax);
-    if (xc >  rail_hard && vc > 0) vc = 0;       // anti-windup at the wall
-    if (xc < -rail_hard && vc < 0) vc = 0;
-    axSetRate(AX_CART, vc*CART_STEPS_PER_M, CART_INVERT);
 
   zaxis:
     {   // both screws get the identical command so the rail cannot rack
@@ -655,8 +651,13 @@ static uint16_t tele_hz = 100;
 
 void printParams() {
   for (int i=0;i<N_PARAMS;i++) Serial.printf("= %s %.5f\n", PARAMS[i].name, *PARAMS[i].ptr);
+  Serial.println(F("# firmware swingup-175mm-20t-v9"));
+  Serial.printf("# pins cart STEP=%d DIR=%d; Z1 STEP=%d DIR=%d; Z2 STEP=%d DIR=%d\n",
+                PIN_CART_STEP, PIN_CART_DIR, PIN_Z1_STEP, PIN_Z1_DIR, PIN_Z2_STEP, PIN_Z2_DIR);
   Serial.printf("= cart_steps_per_m %.2f\n", CART_STEPS_PER_M);
   Serial.printf("= z_steps_per_mm %.2f\n", Z_STEPS_PER_MM);
+  Serial.printf("= vmax_ceiling %.5f\n", VMAX_CEIL);
+  Serial.printf("= rpm_ceiling %.3f\n", cart_hardware::max_rpm);
 }
 
 void handleLine(char *line) {
@@ -669,31 +670,28 @@ void handleLine(char *line) {
                                    Serial.println(F("# de-energized - hold the rail")); }
   else if (!strcmp(cmd,"on"))    { energize(true); Serial.println(F("# energized")); }
   else if (!strcmp(cmd,"auto"))  {
-    if (!fast_profile) { Serial.println(F("! select 'fast' before auto")); return; }
     if (!enc_ok) { Serial.println(F("! encoder not healthy")); return; }
-    energize(true); vc=0; swing_sign=1; mode=M_SWINGUP;
+    eStop(); energize(true); response_watch.reset(th); mode=M_SWINGUP;
     Serial.println(F("# SWINGUP"));
   }
   else if (!strcmp(cmd,"bal"))   {
-    if (!fast_profile) { Serial.println(F("! select 'fast' before bal")); return; }
     if (!enc_ok) { Serial.println(F("! encoder not healthy")); return; }
-    energize(true); vc=0; mode=M_BALANCE; Serial.println(F("# BALANCE"));
+    eStop(); energize(true); mode=M_BALANCE; Serial.println(F("# BALANCE"));
   }
-  else if (!strcmp(cmd,"manual")){ energize(true); vc=0; v_manual=0;
+  else if (!strcmp(cmd,"manual")){ eStop(); energize(true);
                                    mode=M_MANUAL; Serial.println(F("# MANUAL")); }
   else if (!strcmp(cmd,"v")) {
-    if (mode != M_MANUAL) { energize(true); mode = M_MANUAL; }
+    if(mode==M_RAIL_BRAKE || mode==M_RECENTER) return; // ignore held jog keys during recovery
+    if (mode != M_MANUAL) { eStop(); energize(true); mode = M_MANUAL; }
     v_manual = a1 ? constrain(atof(a1), -p_vmax, p_vmax) : 0;
     v_manual_deadline = millis() + MANUAL_TIMEOUT_MS;
   }
   else if (!strcmp(cmd,"zv"))    { energize(true);
                                    zv_target = a1 ? constrain(atof(a1),-p_zvmax,p_zvmax) : 0; }
   else if (!strcmp(cmd,"zstop")) { zv_target = 0; }
-  else if (!strcmp(cmd,"slow"))  { eStop(); profileSlow();
-                                   Serial.println(F("# SLOW profile - bring-up only, will not balance")); }
-  else if (!strcmp(cmd,"fast"))  { eStop(); profileFast();
-                                   Serial.println(F("# FAST profile - full speed, keep clear")); }
-  else if (!strcmp(cmd,"home"))  { home_steps = ax_pos[AX_CART];
+  else if (!strcmp(cmd,"home"))  {
+    if (mode != M_IDLE) { Serial.println(F("! stop and place cart at physical center before home")); return; }
+    home_steps = ax_pos[AX_CART];
                                    Serial.println(F("# x = 0 here")); }
   else if (!strcmp(cmd,"zhome")) { zhome_steps = ax_pos[AX_Z1];
                                    Serial.println(F("# z = 0 here")); }
@@ -712,15 +710,24 @@ void handleLine(char *line) {
     char *a2 = strtok(nullptr," \t");
     if (!a1 || !a2) { Serial.println(F("! usage: set <key> <value>")); return; }
     for (int i=0;i<N_PARAMS;i++) if (!strcmp(a1,PARAMS[i].name)) {
-      float want = atof(a2);
-      // No clamp - your machine, your call. But say so, because above the
-      // ceiling the pulse generator saturates while the controller keeps
-      // integrating vc to the number you asked for, and the velocity feedback
-      // term stops describing the real cart.
-      if (PARAMS[i].ptr == &p_vmax && want > VMAX_CEIL)
-        Serial.printf("! note: %.2f is past the %.2f m/s pulse ceiling - "
-                      "steps saturate, vc will read high. Raise ISR_HZ.\n",
-                      want, VMAX_CEIL);
+      char *end = nullptr;
+      float want = strtof(a2, &end);
+      if (end == a2 || *end || !isfinite(want)) {
+        Serial.println(F("! expected a finite number")); return;
+      }
+      float *ptr = PARAMS[i].ptr;
+      const bool motion_limit = ptr == &p_vmax || ptr == &p_amax_s ||
+          ptr == &p_amax_b || ptr == &p_jmax || ptr == &p_rail ||
+          ptr == &p_amax_m || ptr == &p_jmax_m;
+      if (motion_limit && mode != M_IDLE) {
+        Serial.println(F("! stop before changing motion limits")); return;
+      }
+      if (((motion_limit || ptr == &p_leff || ptr == &p_bw || ptr == &p_phase_soft) && want <= 0) ||
+          (ptr == &p_rail && want <= rail_recovery::edge_margin+rail_recovery::center_tolerance) ||
+          (ptr == &p_vmax && want > VMAX_CEIL)) {
+        Serial.printf("! invalid motion limit (vmax ceiling %.5f m/s)\n", VMAX_CEIL);
+        return;
+      }
       *PARAMS[i].ptr = want;
       if (PARAMS[i].recalc) computeGains();
       Serial.printf("= %s %.5f\n", PARAMS[i].name, *PARAMS[i].ptr);
@@ -733,6 +740,8 @@ void handleLine(char *line) {
                   "z=%.1fmm agc=%d i2c_err=%lu loop=%luus\n",
                   MODE_NAME[mode], (int)g_energized, th, thd, xc, vc, z_mm,
                   enc_agc, (unsigned long)enc_errors, (unsigned long)loop_us);
+    Serial.printf("# ENABLE GPIO27 output=%s (LOW=enabled, HIGH=disabled)\n",
+                  (REG_READ(GPIO_OUT_REG) & (1UL<<PIN_EN_ALL)) ? "HIGH" : "LOW");
     float mm_per_rev = PULLEY_TEETH * BELT_PITCH_MM;
     Serial.printf("# motor %.0f rpm now, %.0f rpm at vmax, %.0f rpm at ceiling "
                   "(%.0f steps/s max)\n",
@@ -742,7 +751,7 @@ void handleLine(char *line) {
   }
   else if (!strcmp(cmd,"help")) {
     Serial.println(F("# auto bal manual v<mps> zv<mmps> zstop stop off on"));
-    Serial.println(F("# slow fast home zhome zero mag rate<hz> set get params stat"));
+    Serial.println(F("# home zhome zero mag rate<hz> set get params stat"));
   }
   else Serial.println(F("! unknown command (try 'help')"));
 }
@@ -765,13 +774,17 @@ void emitTelemetry() {
 
 // ============================== SETUP =======================================
 void setup() {
+  // Preload HIGH before enabling output, before serial delays/I2C/zeroing.
+  gpio_set_level((gpio_num_t)PIN_EN_ALL, 1);
+  pinMode(PIN_EN_ALL, OUTPUT); // Register GPIO with Arduino before digitalWrite().
+  g_energized = false;
   Serial.begin(921600);
   Serial.setTxBufferSize(2048);
   delay(300);
-  Serial.println(F("\n# ESP32 cart-pole v2"));
+  Serial.println(F("\n# ESP32 cart-pole swingup-175mm-20t-v9"));
 
   // I2C comes up FIRST, while nothing else is competing for the CPU. Bringing
-  // the 120 kHz step interrupt up first meant the very first bus transactions
+  // the 125 kHz step interrupt up first meant the very first bus transactions
   // happened under ~20% interrupt load, on a 5 ms timeout, with no retries.
   Wire.begin(PIN_SDA, PIN_SCL, I2C_HZ);
   Wire.setTimeOut(50);
@@ -809,7 +822,11 @@ void setup() {
   home_steps = ax_pos[AX_CART];
   zhome_steps = ax_pos[AX_Z1];
   Serial.printf("# K = [%.3f %.3f %.3f %.3f]\n", K1,K2,K3,K4);
-  Serial.println(F("# SLOW profile active. 'fast' when you want to balance."));
+  Serial.printf("# Cart defaults: leff=%.3f m, vmax=%.3f m/s, amax_s=%.1f, amax_b=%.1f m/s^2, jmax=%.1f m/s^3\n",
+                p_leff, p_vmax, p_amax_s, p_amax_b, p_jmax);
+  Serial.println(F("# Startup position is x=0: place cart at physical center before reset; no homing motion."));
+  Serial.println(F("# Travel 300 mm; normal range +/-130 mm. Predictive braking -> stop -> recenter; fault +/-140 mm."));
+  Serial.println(F("# Drivers DISABLED. Motion commands enable; stop disables all drivers."));
   Serial.println(F("# ready. 'help' for commands."));
 
   xTaskCreatePinnedToCore(controlTask, "ctrl", 4096, nullptr, 5, nullptr, 1);
@@ -859,8 +876,7 @@ void loop() {
 //  so the moment the cart saturates at vmax the acceleration goes to zero and
 //  pumping stops dead for the rest of that half-swing. Watch 'v' in the
 //  dashboard: if it is flat-topped at +-vmax for long stretches, you are
-//  speed-limited, not tuning-limited, and no gain will fix it. A 40T pulley
-//  doubles the ceiling.
+//  speed-limited, not tuning-limited, and no gain will fix it.
 //
 //  LOST STEPS LOOK EXACTLY LIKE BAD TUNING. After any crash, check that the
 //  reported x = 0 is still the physical centre. If it has drifted, you are

@@ -4,6 +4,7 @@
 
 #include <Arduino.h>
 #include <Wire.h>
+#include "quiet_motion.h"
 
 #define SDA_PIN 21
 #define SCL_PIN 22
@@ -14,8 +15,6 @@
 #define SAMPLE_HZ 500
 #define MAX_CAPTURE_MS 45000UL
 #define START_SPEED_RAD_S 0.18f
-#define QUIET_SPEED_RAD_S 0.035f
-#define QUIET_TIME_MS 3000UL
 #define MIN_CAPTURE_MS 7000UL
 #define ENC_INVERT 0
 
@@ -25,7 +24,8 @@ int32_t turnsTicks = 0;
 int16_t lastRaw = 0;
 bool haveRaw = false;
 uint32_t sequenceNo = 0, i2cErrors = 0;
-uint32_t armedAt = 0, startedAt = 0, quietSince = 0, lastSampleUs = 0;
+uint32_t armedAt = 0, startedAt = 0, lastSampleUs = 0;
+QuietMotion quietMotion;
 float previousTheta = 0, filteredSpeed = 0;
 
 int readReg8(uint8_t reg) {
@@ -64,9 +64,10 @@ void endCapture(const char *reason) {
 void handleCommand(String s) {
   s.trim(); s.toUpperCase();
   if (s == "ARM") {
-    state = ARMED; armedAt = millis(); startedAt = quietSince = 0;
+    state = ARMED; armedAt = millis(); startedAt = 0;
+    quietMotion.reset();
     sequenceNo = i2cErrors = 0; filteredSpeed = 0; haveRaw = false;
-    turnsTicks = 0;
+    turnsTicks = 0; previousTheta = 0; lastSampleUs = 0;
     Serial.println("ARMED pull pendulum aside, hold briefly, then release");
   } else if (s == "STOP") {
     if (state == RECORDING) endCapture("host_stop"); else state = IDLE;
@@ -82,7 +83,8 @@ void setup() {
   Serial.begin(921600); Serial.setTxBufferSize(4096);
   Wire.begin(SDA_PIN, SCL_PIN, 400000); Wire.setTimeOut(20);
   delay(200);
-  Serial.println("READY cartpole pendulum characterizer v1");
+  Serial.println("READY cartpole pendulum characterizer v2");
+  Serial.println("QUIET <=1 degree peak-to-peak for 3 seconds; minimum capture 7 seconds");
   Serial.println("FIELDS D seq,t_us,dt_us,raw,ticks,theta,omega,agc,status,i2c_errors");
 }
 
@@ -92,6 +94,12 @@ void loop() {
     handleCommand(s);
   }
 
+  // The hard timeout must also work when encoder reads fail continuously.
+  if (state == RECORDING && (uint32_t)(millis() - startedAt) >= MAX_CAPTURE_MS) {
+    endCapture("timeout");
+    return;
+  }
+
   const uint32_t periodUs = 1000000UL / SAMPLE_HZ;
   uint32_t nowUs = micros();
   if ((uint32_t)(nowUs - lastSampleUs) < periodUs) return;
@@ -99,14 +107,14 @@ void loop() {
   lastSampleUs = nowUs;
 
   int raw = readRaw();
-  if (raw < 0) { i2cErrors++; return; }
+  if (raw < 0) { i2cErrors++; quietMotion.reset(); return; }
   float theta = updateAngle(raw);
   float omega = (theta - previousTheta) / max(dtUs * 1e-6f, 1e-6f);
   previousTheta = theta;
   filteredSpeed += 0.12f * (omega - filteredSpeed);
 
   if (state == ARMED && fabsf(filteredSpeed) >= START_SPEED_RAD_S) {
-    state = RECORDING; startedAt = millis(); quietSince = 0; sequenceNo = 0;
+    state = RECORDING; startedAt = millis(); quietMotion.reset(); sequenceNo = 0;
     Serial.printf("BEGIN %lu\n", (unsigned long)nowUs);
   }
   if (state != RECORDING) return;
@@ -119,11 +127,7 @@ void loop() {
                 filteredSpeed, agc, status, (unsigned long)i2cErrors);
 
   uint32_t elapsed = millis() - startedAt;
-  if (fabsf(filteredSpeed) < QUIET_SPEED_RAD_S) {
-    if (!quietSince) quietSince = millis();
-  } else quietSince = 0;
-  if (elapsed > MIN_CAPTURE_MS && quietSince && millis() - quietSince > QUIET_TIME_MS)
+  const bool quiet = quietMotion.update(turnsTicks, millis());
+  if (elapsed >= MIN_CAPTURE_MS && quiet)
     endCapture("quiet");
-  else if (elapsed >= MAX_CAPTURE_MS)
-    endCapture("timeout");
 }

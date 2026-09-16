@@ -1,5 +1,194 @@
 # Cart-pole: ESP32 firmware + Mac host console
 
+## Manual cart frequency test
+
+Use the [frequency-test GUI](frequency_test/README.md) to choose peak-to-peak
+travel and frequency, preview position/velocity/acceleration/jerk, and run the
+cart manually. It uses a separate ESP32 test sketch. Swing-up auto-tuning is
+paused during these tests.
+
+## Run the swing-up sketch (20T pulley, 300 mm travel)
+
+`swingup/swingup.ino` runs on the ESP32; `cartpole.py` is its Mac console.
+The swing-up cart pins are **STEP = GPIO18, DIR = GPIO19**.
+Z1 uses **STEP = GPIO25, DIR = GPIO26**; Z2 uses **STEP = GPIO16 (RX2), DIR = GPIO17 (TX2)**.
+The older sketches below retain their own wiring.
+Place the cart at the **physical center** before power-up/reset, and let the
+pendulum hang still while the encoder zeros. Startup assigns `x = 0` there;
+there is **no homing movement**. The sketch boots idle with **all drivers disabled** and these cart limits:
+
+| Setting | Default |
+|---|---:|
+| Total physical travel | 300 mm (±150 mm from startup center) |
+| Maximum speed (`vmax`) | 0.75 m/s (1125 RPM) |
+| Swing-up acceleration limit (`amax_s`) | 15 m/s² (22,500 RPM/s) |
+| Balance/braking acceleration limit (`amax_b`) | 15 m/s² (22,500 RPM/s) |
+| Manual acceleration limit (`amax_m`) | 0.5 m/s² |
+| Automatic jerk limit (`jmax`) | 50 m/s³ (75,000 RPM/s²) |
+| Manual jerk limit (`jmax_m`) | 10 m/s³ |
+| Keyboard jog speed (`vman`) | 0.05 m/s |
+
+The 20T pulley and 2 mm belt pitch give 40 mm/revolution and 80 steps/mm
+at 1/16 microstepping. Automatic jerk is 50 m/s³: acceleration changes by
+at most 0.05 m/s² per 1 ms tick, taking 300 ms from zero to 15 m/s².
+Manual jogging keeps its gentler acceleration and jerk limits.
+`stop`, `off`, and faults stop pulses and **disable all three drivers**.
+Startup drives the shared active-low ENABLE pin HIGH before serial delays,
+I2C initialization or encoder zeroing. Support the height assembly while
+motors are disabled. Firmware cannot control GPIO during the earlier reset/bootloader interval.
+There are no `fast` or `slow` profiles; motion commands use the current limits.
+
+### Rail recovery
+
+The physical ends are at ±150 mm from the startup center. Normal operation may
+use the central **260 mm (±130 mm)**. Entering the last 20 mm at either end
+starts `RAIL_BRAKE`: pendulum control pauses, and the cart slows to rest.
+Predictive braking can start earlier when velocity and acceleration require it;
+it aims to stop before ±135 mm. At 0.75 m/s with zero acceleration and jerk
+50 m/s³, stopping requires about **86.6 mm**, so waiting for the final 20 mm
+would not be safe.
+
+After braking, `RECENTER` requests a return speed up to 0.15 m/s and return
+acceleration up to 1.5 m/s² (or lower configured limits), still jerk limited.
+Once within ±3 mm of the existing center reference, with |v|≤0.01 m/s and
+|a|≤0.1 m/s² for 100 ms, automatic operation resumes SWINGUP. Manual recovery
+ends IDLE with drivers disabled. Held manual jog commands are ignored during
+recovery; `stop` always cancels recovery and disables all drivers. Recovery
+never resets the position reference. It times out to a disabled fault after 8 s.
+
+The independent fault boundary remains ±140 mm. Position is inferred from
+commanded steps, not sensed at the ends; missed steps or manual movement can
+invalidate it. These are software margins, not physical endstop detection.
+
+Close other serial programs before uploading. Reset/upload releases the shared
+driver enable, so support the height assembly. From Terminal:
+
+```bash
+cd /Users/sajivshah/Documents/GitHub/cartpole_inverted_pendulum
+arduino-cli compile --fqbn esp32:esp32:esp32 swingup
+arduino-cli upload --fqbn esp32:esp32:esp32 -p /dev/cu.usbserial-0001 swingup
+python3 cartpole.py --port /dev/cu.usbserial-0001
+```
+
+If Python dependencies are missing, install `pyserial` and `matplotlib` in your
+Python environment. The port may change after reconnecting; check `/dev/cu.*`.
+The [Arduino CLI guide](https://docs.arduino.cc/arduino-cli/getting-started)
+describes the compile/upload commands.
+
+Wait for `# ready`, then at the `>>>` prompt:
+
+```text
+params
+mag
+auto
+```
+
+`auto` enables the drivers, starts swing-up and switches to balance when eligible.
+`stat` reports the ENABLE output: LOW means enabled, HIGH means disabled.
+v9 fixes v8 GPIO initialization that could report energized while ENABLE stayed HIGH.
+Space or `stop` disables all drivers. No profile command is needed.
+After moving the disabled cart by hand, place it at physical center and issue
+`home` before starting again; commanded steps cannot observe manual movement.
+Height-axis limits remain 2 mm/s and 20 mm/s².
+
+To change limits, first send `stop`, then for example:
+
+```text
+set vmax 0.75
+set amax_s 15
+set amax_b 15
+set jmax 50
+set rail 0.15
+```
+
+`rail` is **half** the total physical travel, in metres. These serial settings
+last until reset. `home` only
+relabels the stopped cart's current position as zero; use it only at the physical
+center. It does not search for a limit switch.
+
+Both JSON files record 300 mm total travel; the calibration file also records
+175 mm physical pendulum length and 14.2 g pendulum mass. JSON is reference
+metadata, not automatically loaded by this sketch. The current model uses
+**0.166 m effective length**, from 33 same-side cycles at 5–20° across the three
+175 mm captures. [Fit provenance and controller validation](analysis/swingup_validation.md)
+explain the measurement and its limits.
+
+The revised `swingup-175mm-20t-v9` firmware uses smooth phase feedback for energy
+pumping, cart centering, a gentle startup bias, and a balance handoff that also
+checks cart position, speed headroom, approach direction, and acceleration ramp time.
+The capture window opens at 0.60 rad (34.4°), with angular rate below 3 rad/s;
+balance acceleration applies on the handoff tick. The dropout angle is 0.80 rad.
+The speed limiter anticipates velocity gained during acceleration ramp-down. It stops startup if it
+commands over 30 mm cumulative travel for over 2 seconds without a 0.03 rad
+pendulum response. This detects gross non-response; it does **not** detect every
+missed step. Buzzing with little physical movement still needs a motor/driver
+check and a fresh physical center reference. Verify manual motion first. Motion-limit regressions pass for this revision, but
+recorded-state simulations remain imperfect: some cases settle in the ideal
+model despite failing physically. See [rail recovery assessment](analysis/rail_recovery_v9.md) and the earlier [v8 assessment](analysis/v8_assessment.md).
+
+The console now saves `logs/run_<timestamp>_events.jsonl` alongside each CSV.
+It records outgoing commands, firmware identity, parameter replies, diagnostic
+messages and faults; `auto` and `bal` request a parameter snapshot before starting.
+Cart position is inferred from pulses, and velocity/acceleration are commands.
+
+### Ongoing log review
+
+The five-minute Codex review is currently **paused for manual frequency tests**.
+When enabled, it reviews new completed runs and updates
+and tests repository candidates; applying settings and starting trials remain
+manual. The controller does not learn online. See [tuning workflow and current
+candidate](analysis/continuous_tuning.md). Keep Codex open and this Mac awake.
+
+Host-side motion regression checks (no hardware movement):
+
+```bash
+clang++ -std=c++11 -Wall -Wextra -Werror tests/cart_motion_test.cpp -o /tmp/cart_motion_test
+/tmp/cart_motion_test
+clang++ -std=c++11 -O2 -Wall -Wextra -Werror tests/swing_controller_test.cpp -o /tmp/swing_controller_test
+/tmp/swing_controller_test
+python3 tests/test_console_events.py
+```
+
+## Free-swing recording: automatic stop
+
+Recorded datasets are indexed in [pendulum_characterization/README.md](pendulum_characterization/README.md), grouped by physical configuration and date.
+
+The `characterize` sketch ends with `END quiet` when the encoder stays within
+**1° peak-to-peak for 3 seconds**, after at least 7 seconds of recording. It uses
+unwrapped angle counts, so one-count encoder noise does not restart the quiet
+timer. Motion above that band restarts the timer; missing samples or sensor
+errors also restart it. The 45-second maximum capture remains a fallback.
+
+Recompile and upload `characterize` to apply this change, then rerun the host:
+
+```bash
+arduino-cli compile --fqbn esp32:esp32:esp32 characterize
+arduino-cli upload --fqbn esp32:esp32:esp32 -p /dev/cu.usbserial-0001 characterize
+python3 characterize_pendulum.py --port /dev/cu.usbserial-0001
+```
+
+Close other serial consoles, support the height assembly, and keep the cart
+fixed with motors off for the free-swing test. Start hanging, displace the
+pendulum about 10–20°, and release. The Python recorder also sends `STOP` when
+its own timeout expires or you press Ctrl-C.
+
+Replay the two recordings that previously reached the 45-second timeout:
+
+```bash
+clang++ -std=c++11 -Wall -Wextra -Werror tests/quiet_motion_test.cpp -o /tmp/quiet_motion_test
+/tmp/quiet_motion_test pendulum_characterization/175mm_14p2g/2026-09-15/pendulum_20260915_184743.csv pendulum_characterization/175mm_14p2g/2026-09-15/pendulum_20260915_184905.csv
+```
+
+With the new detector, those captures qualify as quiet at approximately
+19.1 seconds and 25.1 seconds respectively. This is an offline replay, not a
+new hardware measurement.
+
+## Original cartpole_esp32 sketch
+
+The remaining instructions describe the separate `cartpole_esp32` sketch,
+including its older pulley and slow boot defaults. For the 20T / 300 mm setup,
+use the `swingup` commands above.
+
 ```
 cartpole_esp32/cartpole_esp32.ino   flash this
 cartpole.py                         run this
@@ -193,3 +382,10 @@ trace means you're speed-limited and no gain will fix it.
 **Swing-up never gets going at all** → raise `amax_s`, or lower `kpx`; the
 centring term steals energy from the pump. **Flies past upright too fast to catch** →
 lower `ke` so the pump eases off near the top, or widen `catch_r`.
+
+
+## Interactive 175 mm simulator
+
+Open [Pendulum Lab](simulator175/index.html) in a browser to test acceleration, jerk, speed ceilings, and four stepper input styles against the measured 175 mm pendulum model. Includes calibration overlays, recorded command-waveform replay, comparisons, parameter sweeps, and CSV/JSON exports.
+
+See [simulator documentation](simulator175/README.md) for local serving, model assumptions, source provenance, and validation. Run `node simulator175/test.js` to check the model and firmware-equation parity.

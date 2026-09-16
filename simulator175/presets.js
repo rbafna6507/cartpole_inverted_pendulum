@@ -1,0 +1,47 @@
+/* Simulation candidates, not hardware-validated motor limits. */
+window.PENDULUM_PRESETS = {
+  "settling": {
+    "name": "Historical 60T candidate · 3 / 5 · j25 · v0.55",
+    "parameters": {
+      "duration": 60,
+      "scenario": "swing",
+      "style": "jerk",
+      "amax_s": 3,
+      "amax_b": 5,
+      "jmax": 25,
+      "vmax": 0.55,
+      "leff": 0.165775567724757,
+      "controllerLength": 0.166,
+      "damping": 0.4022789826050984,
+      "coulomb": 0,
+      "rail": 0.15,
+      "pulleyTeeth": 60,
+      "stepsPerM": 26666.6667,
+      "pulseMax": 62500,
+      "commandMs": 10,
+      "positionGain": 30,
+      "tracking": 1,
+      "lagMs": 0,
+      "delayMs": 0,
+      "bw": 10,
+      "encoderMs": 2,
+      "initialAngle": 0,
+      "initialX": 0,
+      "ke": 3.5,
+      "kpx": 30,
+      "kdx": 0.5,
+      "phase_soft": 1,
+      "catch_a": 0.45,
+      "catch_r": 3,
+      "giveup": 0.7,
+      "pw": 7,
+      "pz": 0.85,
+      "pc1": -0.8,
+      "pc2": -1.2,
+      "manualSpeed": 0.15,
+      "frequency": 0.5,
+      "integrationDt": 0.001
+    },
+    "note": "Historical 60T candidate from the archived engine. Earlier pass counts do not validate the current engine or hardware."
+  }
+};

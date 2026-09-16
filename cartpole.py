@@ -18,6 +18,7 @@ Requires: pip install pyserial matplotlib
 
 import argparse
 import csv
+import json
 import os
 import select
 import sys
@@ -37,7 +38,7 @@ except ImportError:
 # Telemetry field order must match emitTelemetry() in the firmware.
 FIELDS = ["t_ms", "mode", "theta", "theta_dot", "x", "v",
           "accel", "energy", "z1", "z2", "agc", "loop_us"]
-MODES = ["IDLE", "MANUAL", "SWINGUP", "BALANCE", "FAULT"]
+MODES = ["IDLE", "MANUAL", "SWINGUP", "BALANCE", "FAULT", "RAIL_BRAKE", "RECENTER"]
 WINDOW_S = 10.0          # seconds of history kept for the plots
 
 
@@ -67,10 +68,19 @@ class Link:
         self._logfile = open(self.logpath, "w", newline="")
         self._csv = csv.writer(self._logfile)
         self._csv.writerow(FIELDS)
+        self.eventpath = os.path.join(logdir, f"run_{stamp}_events.jsonl")
+        self._eventfile = open(self.eventpath, "w", buffering=1)
+        self._event_lock = threading.Lock()
+        self._log_event("session", "x is inferred from pulses; v/accel are commands, not measured cart motion")
 
         self.thread = threading.Thread(target=self._reader, daemon=True)
         self.thread.start()
         time.sleep(0.3)
+
+    def _log_event(self, direction, text):
+        with self._event_lock:
+            self._eventfile.write(json.dumps({"host_time_s": time.time(),
+                                              "direction": direction, "text": text}) + "\n")
 
     @staticmethod
     def autodetect():
@@ -94,6 +104,8 @@ class Link:
             if not line:
                 continue
 
+            if line[0] != "T":
+                self._log_event("rx", line)
             if line[0] == "T":
                 parts = line.split()
                 if len(parts) != len(FIELDS) + 1:
@@ -129,6 +141,7 @@ class Link:
 
     def send(self, cmd):
         try:
+            self._log_event("tx", cmd)
             self.ser.write((cmd + "\n").encode())
         except Exception as e:
             print(f"  ! write failed: {e}")
@@ -150,14 +163,15 @@ class Link:
         return tt, out
 
     def close(self):
-        self.alive = False
         try:
             self.send("stop")
             time.sleep(0.1)
+        finally:
+            self.alive = False
             self.ser.close()
-        except Exception:
-            pass
-        self._logfile.close()
+            self.thread.join()
+            self._logfile.close()
+            self._eventfile.close()
 
 
 # --------------------------------------------------------------------------
@@ -363,11 +377,9 @@ HELP = """
               SPACE = stop,  Q = back to prompt
   auto        swing-up then balance, dashboard opens
   bal         balance only -- hold the pole upright first
-  stop        emergency stop (velocities to zero, motors stay energized)
+  stop        stop motion and disable all drivers (swing-up firmware)
 
-  slow        crawl speeds -- the boot default, for bring-up and wiring checks.
-              Will NOT balance: the cart can't accelerate under a falling pole.
-  fast        full speeds -- what 'bal' and 'auto' actually need. Keep clear.
+  Swing-up firmware uses one set of defaults; use set to change limits.
 
   off / on    de-energize / energize all three drivers.
               WARNING: the SFU1605 screws back-drive. 'off' with the rail
@@ -379,7 +391,7 @@ HELP = """
   mag         AS5600 magnet health (status + AGC)
   stat        one-shot state dump
   params      list every live-tunable parameter
-  set k v     change one, e.g.  set leff 0.127   /   set pw 9
+  set k v     change one, e.g.  set leff 0.166   /   set pw 9
   get k       read one back
   rate hz     telemetry rate (default 100, try 250 for fast captures)
   log         path of the CSV being written right now
@@ -390,6 +402,7 @@ HELP = """
 def repl(link):
     print(f"  connected: {link.port_name}")
     print(f"  logging:   {link.logpath}")
+    print(f"  events:    {link.eventpath}")
     link.send("params")
     time.sleep(0.4)
     print("  'help' for commands.\n")
@@ -417,10 +430,14 @@ def repl(link):
             time.sleep(0.1)
             dashboard(link, interactive=True, title="manual control")
         elif word == "auto":
+            link.send("params")
+            link.send("stat")
             link.send("auto")
             time.sleep(0.1)
             dashboard(link, interactive=True, title="swing-up + balance")
         elif word == "bal":
+            link.send("params")
+            link.send("stat")
             link.send("bal")
             time.sleep(0.1)
             dashboard(link, interactive=True, title="balance")

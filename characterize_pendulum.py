@@ -103,7 +103,7 @@ def main():
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     ser = serial.Serial(port_or_detect(args.port), args.baud, timeout=.25)
     time.sleep(.4); ser.reset_input_buffer(); ser.write(b"ARM\n")
-    print("Armed. Keep the cart fixed; pull the pendulum 20-60 degrees, then release it.")
+    print("Armed. Keep the cart fixed; pull the pendulum 10-20 degrees, then release it.")
     rows, begun, reason, deadline = [], False, "host_timeout", time.time()+args.timeout
     try:
       while time.time() < deadline:
@@ -116,10 +116,15 @@ def main():
             if len(p)==len(FIELDS): rows.append([float(x) for x in p])
         elif line.startswith("END"):
             reason=line; break
-        elif line.startswith(("READY","ARMED","FIELDS")): print(line)
+        elif line.startswith(("READY","ARMED","FIELDS","QUIET")): print(line)
     except KeyboardInterrupt:
-      reason="host_stop"; ser.write(b"STOP\n")
-    finally: ser.close()
+      reason="host_stop"
+    finally:
+      try:
+        if reason in ("host_stop", "host_timeout"):
+          ser.write(b"STOP\n")
+      finally:
+        ser.close()
     if len(rows) < 100: raise SystemExit("Too little data captured. Re-run and give the pendulum a clean release.")
     csv_path=out/f"pendulum_{stamp}.csv"
     with csv_path.open("w",newline="") as f:
