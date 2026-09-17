@@ -1,5 +1,5 @@
 // ============================================================================
-//  cartpole_swingup_balance_esp32.ino -- 20T / 300 mm travel, centered startup, jerk-limited cart
+//  cartpole_swingup_balance_esp32.ino -- 60T / 300 mm travel, centered startup, jerk-limited cart
 //
 //  PARTS
 //    encoder : AS5600 module (12-bit, I2C, 3.3V, 23x23mm)
@@ -17,17 +17,17 @@
 //       the motor unplugged.
 //    3. Tie the AS5600 module's DIR pin to GND. Floating = undefined count
 //       direction.
-//    4. 24V on M+ (not the VCC pin - that is an output). A NEMA 17 at 1200 RPM
-//       has very little torque left on 12V, and the cart wants that RPM.
+//    4. 24V on M+ (not the VCC pin - that is an output). The 60T cart default of
+//       0.8 m/s corresponds to 400 RPM.
 //
 //  PINOUT
-//    18 cart STEP    19 cart DIR
-//    25 Z1   STEP    26 Z1   DIR
+//    25 cart STEP    26 cart DIR
+//    18 Z1   STEP    19 Z1   DIR
 //    16 Z2   STEP    17 Z2   DIR  (RX2 / TX2)
 //    27 ENABLE for ALL THREE drivers (active low)
 //    21 SDA          22 SCL          AS5600 on 3V3, DIR pin -> GND
 //    MS1/MS2/MS3 are left UNCONNECTED on all three drivers. The BED pulls
-//    them high, which is its 1/16 default: 80 steps/mm on a 20T GT2 belt,
+//    them high, which is its 1/16 default: 26.667 steps/mm on a 60T GT2 belt,
 //    640 steps/mm on a 5 mm ball-screw lead.
 //
 //  WHY ACCELERATION IS THE CONTROL INPUT
@@ -44,7 +44,7 @@
 //    faults disable all drivers. Support the height assembly when disabled.
 //    auto, bal, manual, v, zv or on explicitly enable the drivers.
 //
-//  PROTOCOL (921600 baud, newline terminated). See cartpole.py for the host.
+//  PROTOCOL (115200 baud, newline terminated). See cartpole.py for the host.
 //    host -> board                      board -> host
 //      auto            swing-up           T <ms> <mode> <th> <thd> <x> <v>
 //      bal             balance only         <a> <e> <z1> <z2> <agc> <dt_us>
@@ -67,15 +67,20 @@
 #include "driver/gpio.h"
 #include "cart_motion.h"
 #include "rail_recovery.h"
+#include "spin_recovery.h"
+#include "upright_session.h"
 #include "swing_controller.h"
+#include "encoder_reference.h"
+#include "serial_frame.h"
+#include <cstdarg>
 #include "soc/soc.h"        // REG_WRITE
 #include "soc/gpio_reg.h"   // GPIO_OUT_W1TS_REG / GPIO_OUT_W1TC_REG
 
 // ============================== PINS ========================================
-#define PIN_CART_STEP   18
-#define PIN_CART_DIR    19
-#define PIN_Z1_STEP     25
-#define PIN_Z1_DIR      26
+#define PIN_CART_STEP   25
+#define PIN_CART_DIR    26
+#define PIN_Z1_STEP     18
+#define PIN_Z1_DIR      19
 #define PIN_Z2_STEP     16
 #define PIN_Z2_DIR      17
 #define PIN_EN_ALL      27        // shared ENABLE, active LOW
@@ -84,20 +89,39 @@
 #define I2C_HZ          400000    // drop to 100000 if the cable to the cart is
                                   // long or you see enc_err climbing
 
-#define CART_INVERT     1         // flip if 'v 0.05' moves the cart the wrong way
+#define CART_INVERT     0         // v19: reverse cart polarity for upright trial; encoder sign unchanged
 #define Z_INVERT        0         // flip if 'zv 5' lowers instead of raises
 #define ENC_INVERT      0         // flip if theta goes negative when the pole
                                   // leans toward +x
 
+// One owner (setup/loop) writes UART frames; the control task queues messages.
+// Every firmware line is @payload*CRC16, including STOP and parameter replies.
+void checkedPrintln(const char *text) {
+  size_t length=strlen(text);
+  while(length && (text[length-1]=='\n' || text[length-1]=='\r'))--length;
+  Serial.printf("@%.*s*%04X\n",(int)length,text,serial_frame::checksum(text,length));
+}
+void checkedPrintln(const __FlashStringHelper *text) {
+  checkedPrintln(reinterpret_cast<const char *>(text));
+}
+void checkedPrintf(const char *format, ...) {
+  char text[256];va_list args;va_start(args,format);
+  const int length=vsnprintf(text,sizeof(text),format,args);va_end(args);
+  if(length<0 || length>=(int)sizeof(text)){
+    checkedPrintln("! serial message too long; discarded");return;
+  }
+  checkedPrintln(text);
+}
+
 // ========================== MECHANICS =======================================
 // Big Easy Driver factory default is 1/16 with MS pins unconnected.
-// On the 20T GT2 pulley this is 80 steps/mm.
+// On the 60T GT2 pulley this is 26.667 steps/mm.
 // If you ever want more headroom without touching the timer: jumper MS3 to GND
-// for 1/8 (40 steps/mm), or MS1+MS3 for 1/4 (20 steps/mm).
+// for 1/8 (13.333 steps/mm), or MS1+MS3 for 1/4 (6.667 steps/mm).
 #define CART_MICROSTEPS cart_hardware::microsteps        // MS pins floating -> BED default
 #define Z_MICROSTEPS    16        // same
 #define MOTOR_STEPS_REV cart_hardware::motor_steps       // 1.8 deg
-#define PULLEY_TEETH    cart_hardware::pulley_teeth        // measured hardware: GT2 20T = 40 mm/rev
+#define PULLEY_TEETH    cart_hardware::pulley_teeth        // measured hardware: GT2 60T = 120 mm/rev
 #define BELT_PITCH_MM   cart_hardware::belt_pitch_mm
 #define Z_LEAD_MM       5.0f      // SFU1605
 
@@ -108,9 +132,8 @@ static const float Z_STEPS_PER_MM =
 
 #define GRAV            9.81f
 #define CTRL_HZ         1000
-// An exact 8 us timer period avoids the old 120 kHz / integer-microsecond
-// mismatch (which actually ran at 125 kHz). At 20T / 1:16, 1125 RPM (0.75 m/s) needs
-// 60,000 steps/s; the DDS ceiling here is 62,500 steps/s = 0.78125 m/s.
+// A 7 us timer period gives 142857.14 ticks/s and 71428.57 steps/s.
+// At 60T / 1:16, 0.8 m/s needs 21333.333 steps/s; DDS uses this same period.
 #define ISR_HZ          cart_hardware::isr_hz
 static const float DT = 1.0f / CTRL_HZ;
 
@@ -157,6 +180,7 @@ float K1, K2, K3, K4;
 
 struct Param { const char *name; float *ptr; bool recalc; };
 static const Param PARAMS[] = {
+  {"bal_pw",&controller.bal_pw,false},
   {"leff",&p_leff,true},   {"pw",&p_pw,true},      {"pz",&p_pz,true},
   {"pc1",&p_pc1,true},     {"pc2",&p_pc2,true},
   {"vmax",&p_vmax,false},  {"amax_s",&p_amax_s,false},{"amax_b",&p_amax_b,false},
@@ -216,12 +240,11 @@ static const uint8_t DIR_PIN[N_AX] = { PIN_CART_DIR, PIN_Z1_DIR, PIN_Z2_DIR };
 void axSetRate(int i, float steps_per_sec, bool invert) {
   if (!g_energized) { ax_inc[i] = 0; return; }
   int8_t d = (steps_per_sec >= 0.0f) ? 1 : -1;
-  if (d != ax_dir[i]) {
-    ax_dir[i] = d;
-    bool high = (d > 0);
-    if (invert) high = !high;
-    digitalWrite(DIR_PIN[i], high ? HIGH : LOW);
-  }
+  // Write DIR even on the first positive command: ax_dir starts at +1,
+  // but GPIO starts LOW. With non-inverted polarity the required level is HIGH.
+  ax_dir[i] = d; // Position counts retain the logical command sign.
+  const bool high = (d > 0) != invert;
+  digitalWrite(DIR_PIN[i], high ? HIGH : LOW);
   float r = fabsf(steps_per_sec);
   const float RMAX = ISR_HZ * 0.5f;
   if (r > RMAX) r = RMAX;
@@ -241,11 +264,11 @@ void steppersInit() {
 #if ESP_ARDUINO_VERSION_MAJOR >= 3
   g_timer = timerBegin(1000000);
   timerAttachInterrupt(g_timer, &onStepTimer);
-  timerAlarm(g_timer, 1000000UL / ISR_HZ, true, 0);
+  timerAlarm(g_timer, cart_hardware::step_timer_period_us, true, 0);
 #else
   g_timer = timerBegin(0, 80, true);
   timerAttachInterrupt(g_timer, &onStepTimer, true);
-  timerAlarmWrite(g_timer, 1000000UL / ISR_HZ, true);
+  timerAlarmWrite(g_timer, cart_hardware::step_timer_period_us, true);
   timerAlarmEnable(g_timer);
 #endif
 }
@@ -352,6 +375,12 @@ void encUpdate() {
   enc_last_raw = raw;
 }
 
+int32_t encZeroRaw() {
+  // enc_ticks is relative to the first sample, not the sensor absolute zero.
+  const int32_t raw_zero=enc_last_raw-(enc_ticks-enc_zero)%ENC_CPR;
+  return (raw_zero%ENC_CPR+ENC_CPR)%ENC_CPR;
+}
+
 inline float wrapPi(float a) {
   while (a >  (float)M_PI) a -= 2.0f*(float)M_PI;
   while (a < -(float)M_PI) a += 2.0f*(float)M_PI;
@@ -360,11 +389,9 @@ inline float wrapPi(float a) {
 
 // theta: 0 = upright, +-pi = hanging, positive = pole top leaning toward +x
 float encTheta() {
-  float a = (enc_ticks - enc_zero) * (2.0f*(float)M_PI / (float)ENC_CPR);
-#if ENC_INVERT
-  a = -a;
-#endif
-  return wrapPi(a + (float)M_PI);
+  // BALANCE, capture gating, observer and telemetry all use the measured upright.
+  // A startup/manual down-zero never changes this absolute reference.
+  return encoder_reference::angle_from_upright(enc_last_raw, ENC_INVERT != 0);
 }
 
 // Magnet diagnostics. The reviews on these modules are full of people who got
@@ -382,20 +409,20 @@ void encDiagRead() {
 // Printing only - safe from loop(), reads the cached copies.
 void encPrintMagnet() {
   uint8_t st = enc_status, ag = enc_agc;
-  if (!enc_ok) Serial.println(F("! encoder not reading - values below are stale"));
-  Serial.printf("# AS5600 status=0x%02X agc=%d  %s%s%s\n", st, ag,
+  if (!enc_ok) checkedPrintln(F("! encoder not reading - values below are stale"));
+  checkedPrintf("# AS5600 status=0x%02X agc=%d  %s%s%s\n", st, ag,
                 (st & 0x20) ? "magnet-ok " : "NO-MAGNET ",
                 (st & 0x10) ? "too-weak "  : "",
                 (st & 0x08) ? "too-strong" : "");
-  if (ag >= 120)     Serial.println(F("# AGC at max gain - magnet too far, move it CLOSER"));
-  else if (ag <= 8)  Serial.println(F("# AGC at min gain - magnet too close"));
-  Serial.printf("# i2c errors=%lu  bus recoveries=%lu\n",
+  if (ag >= 120)     checkedPrintln(F("# AGC at max gain - magnet too far, move it CLOSER"));
+  else if (ag <= 8)  checkedPrintln(F("# AGC at min gain - magnet too close"));
+  checkedPrintf("# i2c errors=%lu  bus recoveries=%lu\n",
                 (unsigned long)enc_errors, (unsigned long)enc_recoveries);
 }
 
 // Blocking version - setup() only, before the control task exists.
 void encZeroBlocking() {
-  Serial.println(F("# zeroing: hold the pendulum still, hanging down..."));
+  checkedPrintln(F("# zeroing: hold the pendulum still, hanging down..."));
   int stable = 0; int32_t prev = enc_ticks; uint32_t t0 = millis();
   while (stable < 400 && millis() - t0 < 15000) {
     encUpdate();
@@ -405,16 +432,16 @@ void encZeroBlocking() {
   }
   if (stable >= 400) {
     enc_zero = enc_ticks;
-    Serial.printf("# encoder zeroed, theta = %.3f rad\n", encTheta());
+    checkedPrintf("# down reference recorded; fixed upright 3416 counts, theta = %.3f rad\n", encTheta());
   } else {
-    Serial.println(F("! encoder zero FAILED: pendulum never became still"));
+    checkedPrintln(F("! encoder zero FAILED: pendulum never became still"));
   }
 }
 
 // ========================== CONTROLLER ======================================
-enum Mode { M_IDLE=0, M_MANUAL, M_SWINGUP, M_BALANCE, M_FAULT, M_RAIL_BRAKE, M_RECENTER };
+enum Mode { M_IDLE=0, M_MANUAL, M_SWINGUP, M_BALANCE, M_FAULT, M_RAIL_BRAKE, M_RAIL_RETURN, M_SPIN_BRAKE, M_SPIN_CENTER, M_SPIN_WAIT, M_BAL_BRAKE, M_BAL_CENTER };
 volatile Mode mode = M_IDLE;
-const char *MODE_NAME[] = {"IDLE","MANUAL","SWINGUP","BALANCE","FAULT","RAIL_BRAKE","RECENTER"};
+const char *MODE_NAME[] = {"IDLE","MANUAL","SWINGUP","BALANCE","FAULT","RAIL_BRAKE","RAIL_RETURN","SPIN_BRAKE","SPIN_CENTER","SPIN_WAIT","BAL_BRAKE","BAL_CENTER"};
 
 volatile float th=0, thd=0, xc=0, vc=0, acc_cmd=0, energy_n=-1;
 volatile float z_mm=0;
@@ -427,7 +454,20 @@ static int32_t home_steps=0, zhome_steps=0;
 // Cross-context requests. loop() may only SET these; the control task is the
 // only thing allowed to act on them, because it is the sole owner of the I2C
 // bus once it exists. This is the whole fix for 'mag' returning nothing.
-volatile bool req_diag = false, req_zero = false;
+volatile bool req_diag = false, req_zero = false, req_encoder = false;
+constexpr uint32_t HOST_TIMEOUT_MS=1500;
+volatile uint32_t last_host_command_ms=0;
+struct ControlMessage {char text[160];};
+QueueHandle_t control_messages=nullptr;
+volatile uint32_t dropped_control_messages=0;
+void controlLog(const char *text){
+  ControlMessage message;snprintf(message.text,sizeof(message.text),"%s",text);
+  if(!control_messages || xQueueSend(control_messages,&message,0)!=pdTRUE)++dropped_control_messages;
+}
+void flushControlMessages(){
+  ControlMessage message;
+  while(control_messages && xQueueReceive(control_messages,&message,0)==pdTRUE)checkedPrintln(message.text);
+}
 volatile bool diag_done = false, zero_done = false;
 static bool zeroing = false;
 static int  zero_stable = 0;
@@ -440,6 +480,12 @@ static float zv_target=0, zv_now=0;
 static int cart_brake_direction=0;
 static rail_recovery::State rail_recovery_state;
 static bool recovery_was_manual=false;
+static spin_recovery::State spin_recovery_state;
+static upright_session::Return upright_return;
+static bool upright_only=false;
+volatile bool req_balance=false;
+bool inUprightReturn(){return mode==M_BAL_BRAKE || mode==M_BAL_CENTER;}
+bool inSpinRecovery(){return mode==M_SPIN_BRAKE || mode==M_SPIN_CENTER || mode==M_SPIN_WAIT;}
 
 // Exact pole placement. With a = -(K1*th + K2*thd + K3*x + K4*v) the closed
 // loop characteristic polynomial of this plant is
@@ -459,7 +505,10 @@ void estimate(float theta_meas) {
   thd = thd_hat;
 }
 
-swing_control::Gains currentGains() { return {K1,K2,K3,K4}; }
+swing_control::Gains currentGains() {
+  if(upright_only)return swing_control::uprightGains(controller);
+  return {K1,K2,K3,K4};
+}
 float balanceAccel() {
   return swing_control::balance(currentGains(), th_hat, thd, xc, vc);
 }
@@ -471,21 +520,41 @@ float swingAccel() {
 void eStop() {
   energize(false); // Disable immediately; ISR also suppresses pulses/counts.
   mode = M_IDLE;
+  req_balance=false; upright_only=false; upright_return.reset();
   cart_brake_direction = 0;
   rail_recovery_state.reset(); recovery_was_manual=false;
+  spin_recovery_state.reset();
   pump.reset(); response_watch.armed = false;
   v_manual = 0; vc = 0; acc_cmd = 0; zv_target = 0; zv_now = 0;
   for (int i=0;i<N_AX;i++) ax_inc[i] = 0;
   REG_WRITE(GPIO_OUT_W1TC_REG, ALL_STEP_MASK);
 }
 
+void beginUprightReturn(const char *reason) {
+  upright_return.begin(micros());
+  rail_recovery_state.reset(); spin_recovery_state.reset();
+  response_watch.armed=false; pump.reset(); v_manual=0; zv_target=0;
+  mode=M_BAL_BRAKE;
+  controlLog(reason);
+}
+
 void beginRailRecovery() {
-  if (mode==M_RAIL_BRAKE || mode==M_RECENTER) return;
+  if(upright_only){beginUprightReturn("# upright trial rail protection -> BAL_BRAKE; return to center and stop");return;}
+  if (mode==M_RAIL_BRAKE || mode==M_RAIL_RETURN) return;
   recovery_was_manual = mode==M_MANUAL;
-  rail_recovery_state.begin();
+  rail_recovery_state.begin(xc,p_rail,cart_brake_direction);
   // Keep the startup response watch active through recovery.
   mode=M_RAIL_BRAKE;
-  Serial.println(F("# rail recovery -> BRAKING; pendulum control paused"));
+  controlLog("# rail recovery -> BRAKING; pendulum control paused");
+}
+
+void beginSpinRecovery() {
+  spin_recovery_state.begin(micros());
+  rail_recovery_state.reset(); recovery_was_manual=false;
+  response_watch.armed=false; pump.reset();
+  v_manual=0; zv_target=0;
+  mode=M_SPIN_BRAKE;
+  controlLog("# pendulum |theta_dot| >25 rad/s -> SPIN_BRAKE; center and wait below 10 rad/s");
 }
 
 void controlTask(void *) {
@@ -495,12 +564,24 @@ void controlTask(void *) {
     uint32_t t_start = micros();
 
     encUpdate();
+    if(((mode!=M_IDLE && mode!=M_FAULT) || zv_target!=0 || zv_now!=0) &&
+        uint32_t(millis()-last_host_command_ms)>HOST_TIMEOUT_MS){
+      eStop();mode=M_FAULT;controlLog("! host link timeout -> FAULT; drivers disabled");
+    }
+    if(req_encoder){
+      req_encoder=false;encDiagRead();
+      char sample[160];
+      snprintf(sample,sizeof(sample),"E %lu %ld %ld %u %u %lu %d %d",
+        (unsigned long)millis(),(long)enc_last_raw,(long)encZeroRaw(),
+        (unsigned)enc_agc,(unsigned)enc_status,(unsigned long)enc_errors,(int)enc_ok,(int)g_energized);
+      controlLog(sample);
+    }
 
     // Never continue closed-loop control on stale angle data. A single failed
     // transaction is held over; five consecutive failures (~5 ms) latch a
     // fault and stop pulse generation.
     if (mode != M_IDLE && mode != M_FAULT && enc_consec_err >= 5) {
-      Serial.println(F("! encoder stale -> FAULT"));
+      controlLog("! encoder stale -> FAULT");
       eStop(); mode = M_FAULT;
     }
 
@@ -518,7 +599,7 @@ void controlTask(void *) {
         zeroing = false; zero_done = true;
       } else if (millis() - zero_t0 > 15000) {
         zeroing = false;
-        Serial.println(F("! encoder zero FAILED: pendulum never became still"));
+        controlLog("! encoder zero FAILED: pendulum never became still");
       }
     }
 
@@ -528,9 +609,28 @@ void controlTask(void *) {
 
     float rail_hard = p_rail - 0.01f;
     if (mode != M_IDLE && mode != M_FAULT && fabsf(xc) > rail_hard) {
-      Serial.println(F("! rail limit -> FAULT"));
+      controlLog("! rail limit -> FAULT");
       mode = M_FAULT; eStop(); mode = M_FAULT;
     }
+
+    // Consume the one-shot start in the control task using fresh sensor state.
+    // Rejection never arms a future automatic capture.
+    if(req_balance){
+      req_balance=false;
+      if(mode!=M_IDLE || zeroing || !upright_session::canStart(th,th_hat,thd,xc,vc,acc_cmd,enc_ok && enc_consec_err==0)){
+        controlLog("! bal rejected: stop, cart within 30mm of center, pole within 10deg upright and rate <=1rad/s; retry bal when ready");
+      }else{
+        upright_only=true; energize(true); mode=M_BALANCE;
+        controlLog("# BALANCE");
+        controlLog("# upright-only; >50deg -> brake, center, disable; no automatic restart");
+      }
+    }
+    if(upright_only && mode==M_BALANCE && upright_session::fallen(th))
+      beginUprightReturn("# upright fall >50deg -> BAL_BRAKE; return to center and stop");
+
+    const bool automatic=mode==M_SWINGUP || mode==M_BALANCE ||
+        ((mode==M_RAIL_BRAKE || mode==M_RAIL_RETURN) && !recovery_was_manual);
+    if(!upright_only && automatic && enc_ok && spin_recovery::trigger(thd))beginSpinRecovery();
 
     if ((mode==M_MANUAL || mode==M_SWINGUP || mode==M_BALANCE) &&
         rail_recovery_state.atEdge(xc,p_rail)) beginRailRecovery();
@@ -547,7 +647,7 @@ void controlTask(void *) {
         if (swing_control::canCapture(controller, currentGains(), th_hat, thd, xc, vc, acc_cmd)) {
           mode = M_BALANCE; response_watch.armed = false;
           a = constrain(balanceAccel(), -p_amax_b, p_amax_b);
-          Serial.println(F("# caught -> BALANCE"));
+          controlLog("# caught -> BALANCE");
         }
         break;
 
@@ -555,15 +655,15 @@ void controlTask(void *) {
         float Eup = GRAV/p_leff;
         energy_n = (0.5f*thd*thd + Eup*cosf(th))/Eup;
         a = constrain(balanceAccel(), -p_amax_b, p_amax_b);
-        if (fabsf(th_hat) > p_giveup) {
+        if (!upright_only && fabsf(th_hat) > p_giveup) {
           mode = M_SWINGUP;
-          Serial.println(F("# lost it -> SWINGUP"));
+          controlLog("# lost it -> SWINGUP");
         }
         break;
       }
 
       case M_RAIL_BRAKE:
-      case M_RECENTER: {
+      case M_RAIL_RETURN: {
         cart_motion::State current;
         current.velocity=vc; current.acceleration=acc_cmd;
         current.brake_direction=cart_brake_direction;
@@ -571,22 +671,67 @@ void controlTask(void *) {
         const float recovery_jerk=recovery_was_manual?p_jmax_m:p_jmax;
         if(rail_recovery_state.update(xc,current,DT)) {
           if(recovery_was_manual) {
-            eStop(); Serial.println(F("# rail centered -> IDLE; drivers disabled"));
-            goto zaxis;
+            recovery_was_manual=false; mode=M_MANUAL;
+            v_manual=0; v_manual_deadline=millis();
+            a=cart_motion::velocityAccel(vc,0,p_amax_m,p_jmax_m,DT);
+            controlLog("# back inside operating range -> MANUAL");
+            break;
           }
           pump.reset();
           mode=M_SWINGUP;
           a=swingAccel();
-          Serial.println(F("# rail centered -> SWINGUP"));
+          controlLog("# back inside operating range -> SWINGUP");
         } else if(rail_recovery_state.timedOut()) {
           eStop(); mode=M_FAULT;
-          Serial.println(F("! rail recovery timeout -> FAULT"));
+          controlLog("! rail recovery timeout -> FAULT");
           goto zaxis;
         } else {
-          if(mode==M_RAIL_BRAKE && rail_recovery_state.phase==rail_recovery::CENTERING) {
-            mode=M_RECENTER; Serial.println(F("# rail stopped -> RECENTER"));
+          if(mode==M_RAIL_BRAKE && rail_recovery_state.phase==rail_recovery::RETURNING) {
+            mode=M_RAIL_RETURN; controlLog("# rail stopped -> RETURN_INSIDE");
           }
           a=rail_recovery_state.demand(xc,current,p_vmax,recovery_amax,recovery_jerk,DT);
+        }
+        break;
+      }
+
+      case M_BAL_BRAKE:
+      case M_BAL_CENTER: {
+        cart_motion::State current;
+        current.velocity=vc;current.acceleration=acc_cmd;current.brake_direction=cart_brake_direction;
+        const uint32_t now=micros();
+        if(upright_return.update(xc,current,now)){
+          eStop();controlLog("# upright trial centered -> STOP; drivers disabled; send bal for another trial");
+          goto zaxis;
+        }
+        if(upright_return.timedOut(now)){
+          eStop();mode=M_FAULT;controlLog("! upright return timeout -> FAULT; drivers disabled");
+          goto zaxis;
+        }
+        mode=upright_return.braking()?M_BAL_BRAKE:M_BAL_CENTER;
+        a=upright_return.demand(xc,current,p_vmax,max(p_amax_s,p_amax_b),p_jmax,DT);
+        break;
+      }
+
+      case M_SPIN_BRAKE:
+      case M_SPIN_CENTER:
+      case M_SPIN_WAIT: {
+        cart_motion::State current;
+        current.velocity=vc;current.acceleration=acc_cmd;current.brake_direction=cart_brake_direction;
+        const uint32_t now=micros();
+        const auto previous=spin_recovery_state.phase;
+        if(spin_recovery_state.update(xc,current,thd,enc_ok,now)) {
+          pump.reset();response_watch.reset(th);mode=M_SWINGUP;
+          a=swingAccel();
+          controlLog("# centered and |theta_dot| <10 rad/s -> SWINGUP");
+        } else if(spin_recovery_state.timedOut(now)) {
+          eStop();mode=M_FAULT;
+          controlLog("! spin recovery centering timeout -> FAULT");
+          goto zaxis;
+        } else {
+          mode=spin_recovery_state.phase==spin_recovery::BRAKING?M_SPIN_BRAKE:
+               spin_recovery_state.phase==spin_recovery::CENTERING?M_SPIN_CENTER:M_SPIN_WAIT;
+          if(previous!=spin_recovery_state.phase){char notice[64];snprintf(notice,sizeof(notice),"# spin recovery -> %s",MODE_NAME[mode]);controlLog(notice);}
+          a=spin_recovery_state.demand(xc,current,p_vmax,max(p_amax_s,p_amax_b),p_jmax,DT);
         }
         break;
       }
@@ -603,9 +748,9 @@ void controlTask(void *) {
       motion.acceleration = acc_cmd;
       motion.brake_direction = cart_brake_direction;
       const bool use_manual_limits=mode==M_MANUAL ||
-        ((mode==M_RAIL_BRAKE || mode==M_RECENTER) && recovery_was_manual);
+        ((mode==M_RAIL_BRAKE || mode==M_RAIL_RETURN) && recovery_was_manual);
       const float drive_amax = use_manual_limits ? p_amax_m :
-                               ((mode==M_RAIL_BRAKE || mode==M_RECENTER) ? max(p_amax_s,p_amax_b) :
+                               ((mode==M_RAIL_BRAKE || mode==M_RAIL_RETURN || inSpinRecovery() || inUprightReturn()) ? max(p_amax_s,p_amax_b) :
                                 (mode == M_SWINGUP ? p_amax_s : p_amax_b));
       const float brake_amax = use_manual_limits ? p_amax_m : max(p_amax_s, p_amax_b);
       const float jerk = use_manual_limits ? p_jmax_m : p_jmax;
@@ -619,11 +764,11 @@ void controlTask(void *) {
       // Only exceptional stops bypass the jerk ramp. Never keep integrating
       // a speed the pulse generator cannot produce.
       if (fabsf(vc) > p_vmax + 0.002f) {
-        Serial.println(F("! motion speed limit -> FAULT"));
+        controlLog("! motion speed limit -> FAULT");
         eStop(); mode = M_FAULT;
       }
-      if ((mode==M_SWINGUP || ((mode==M_RAIL_BRAKE || mode==M_RECENTER) && !recovery_was_manual)) && response_watch.fault(th, vc, DT)) {
-        Serial.println(F("! no pendulum response to cart command -> FAULT; check motor tracking and recenter"));
+      if ((mode==M_SWINGUP || ((mode==M_RAIL_BRAKE || mode==M_RAIL_RETURN) && !recovery_was_manual)) && response_watch.fault(th, vc, DT)) {
+        controlLog("! no pendulum response to cart command -> FAULT; check motor tracking and recenter");
         eStop(); mode = M_FAULT;
       }
       axSetRate(AX_CART, vc*CART_STEPS_PER_M, CART_INVERT);
@@ -647,41 +792,68 @@ void controlTask(void *) {
 }
 
 // ============================= PROTOCOL =====================================
-static uint16_t tele_hz = 100;
+static uint16_t tele_hz = 25;
 
 void printParams() {
-  for (int i=0;i<N_PARAMS;i++) Serial.printf("= %s %.5f\n", PARAMS[i].name, *PARAMS[i].ptr);
-  Serial.println(F("# firmware swingup-175mm-20t-v9"));
-  Serial.printf("# pins cart STEP=%d DIR=%d; Z1 STEP=%d DIR=%d; Z2 STEP=%d DIR=%d\n",
+  for (int i=0;i<N_PARAMS;i++) checkedPrintf("= %s %.5f\n", PARAMS[i].name, *PARAMS[i].ptr);
+  checkedPrintln(F("# firmware swingup-175mm-60t-v21"));
+  checkedPrintf("# pins cart STEP=%d DIR=%d; Z1 STEP=%d DIR=%d; Z2 STEP=%d DIR=%d\n",
                 PIN_CART_STEP, PIN_CART_DIR, PIN_Z1_STEP, PIN_Z1_DIR, PIN_Z2_STEP, PIN_Z2_DIR);
-  Serial.printf("= cart_steps_per_m %.2f\n", CART_STEPS_PER_M);
-  Serial.printf("= z_steps_per_mm %.2f\n", Z_STEPS_PER_MM);
-  Serial.printf("= vmax_ceiling %.5f\n", VMAX_CEIL);
-  Serial.printf("= rpm_ceiling %.3f\n", cart_hardware::max_rpm);
+  checkedPrintf("= cart_steps_per_m %.2f\n", CART_STEPS_PER_M);
+  checkedPrintf("= pulley_teeth %d\n", PULLEY_TEETH);
+  checkedPrintf("= cart_mm_per_rev %.2f\n", cart_hardware::mm_per_rev);
+  checkedPrintf("= z_steps_per_mm %.2f\n", Z_STEPS_PER_MM);
+  checkedPrintf("= vmax_ceiling %.5f\n", VMAX_CEIL);
+  checkedPrintf("= rpm_ceiling %.3f\n", cart_hardware::max_rpm);
+  checkedPrintf("= host_timeout_ms %lu\n",(unsigned long)HOST_TIMEOUT_MS);
+  checkedPrintln(F("= encoder_snapshot 1"));
+  checkedPrintln(F("= serial_crc16 1"));
+  checkedPrintf("= cart_invert %d\n",CART_INVERT);
+  checkedPrintf("= encoder_invert %d\n",ENC_INVERT);
+  checkedPrintf("= encoder_upright_raw %d\n",encoder_reference::upright_raw);
+  checkedPrintf("= spin_trip_rad_s %.1f\n",spin_recovery::trip_rad_s);
+  checkedPrintf("= spin_resume_rad_s %.1f\n",spin_recovery::resume_rad_s);
+  checkedPrintln(F("= bal_fall_deg 50"));
+  checkedPrintln(F("= bal_start_deg 10"));
+  const auto bk=swing_control::uprightGains(controller);
+  checkedPrintf("= bal_k1 %.7f\n",bk.k1);
+  checkedPrintf("= bal_k2 %.7f\n",bk.k2);
+  checkedPrintf("= bal_k3 %.7f\n",bk.k3);
+  checkedPrintf("= bal_k4 %.7f\n",bk.k4);
 }
 
 void handleLine(char *line) {
   char *cmd = strtok(line, " \t");
   if (!cmd) return;
+  last_host_command_ms=millis();
   char *a1 = strtok(nullptr, " \t");
+  // Repeated GUI/manual commands cannot bypass the latched overspeed recovery.
+  // stop/off always remain available and cancel recovery.
+  if((inSpinRecovery() || inUprightReturn()) && (!strcmp(cmd,"auto") || !strcmp(cmd,"bal") ||
+      !strcmp(cmd,"manual") || !strcmp(cmd,"v") || !strcmp(cmd,"zv"))) {
+    checkedPrintln(F("! recovery active; wait for completion or use stop"));return;
+  }
 
-  if      (!strcmp(cmd,"stop"))  { eStop(); Serial.println(F("# STOP")); }
+  if      (!strcmp(cmd,"ping")) { /* keepalive: no response traffic */ }
+  else if (!strcmp(cmd,"enc")) { req_encoder=true; }
+  else if (!strcmp(cmd,"stop"))  { eStop(); checkedPrintln(F("# STOP")); }
   else if (!strcmp(cmd,"off"))   { eStop(); energize(false);
-                                   Serial.println(F("# de-energized - hold the rail")); }
-  else if (!strcmp(cmd,"on"))    { energize(true); Serial.println(F("# energized")); }
+                                   checkedPrintln(F("# de-energized - hold the rail")); }
+  else if (!strcmp(cmd,"on"))    { energize(true); checkedPrintln(F("# energized")); }
   else if (!strcmp(cmd,"auto"))  {
-    if (!enc_ok) { Serial.println(F("! encoder not healthy")); return; }
+    if (!enc_ok) { checkedPrintln(F("! encoder not healthy")); return; }
     eStop(); energize(true); response_watch.reset(th); mode=M_SWINGUP;
-    Serial.println(F("# SWINGUP"));
+    checkedPrintln(F("# SWINGUP"));
   }
   else if (!strcmp(cmd,"bal"))   {
-    if (!enc_ok) { Serial.println(F("! encoder not healthy")); return; }
-    eStop(); energize(true); mode=M_BALANCE; Serial.println(F("# BALANCE"));
+    if (!enc_ok) { checkedPrintln(F("! encoder not healthy")); return; }
+    if(mode!=M_IDLE){checkedPrintln(F("! stop before starting an upright trial"));return;}
+    req_balance=true;
   }
   else if (!strcmp(cmd,"manual")){ eStop(); energize(true);
-                                   mode=M_MANUAL; Serial.println(F("# MANUAL")); }
+                                   mode=M_MANUAL; checkedPrintln(F("# MANUAL")); }
   else if (!strcmp(cmd,"v")) {
-    if(mode==M_RAIL_BRAKE || mode==M_RECENTER) return; // ignore held jog keys during recovery
+    if(mode==M_RAIL_BRAKE || mode==M_RAIL_RETURN) return; // ignore held jog keys during recovery
     if (mode != M_MANUAL) { eStop(); energize(true); mode = M_MANUAL; }
     v_manual = a1 ? constrain(atof(a1), -p_vmax, p_vmax) : 0;
     v_manual_deadline = millis() + MANUAL_TIMEOUT_MS;
@@ -690,84 +862,96 @@ void handleLine(char *line) {
                                    zv_target = a1 ? constrain(atof(a1),-p_zvmax,p_zvmax) : 0; }
   else if (!strcmp(cmd,"zstop")) { zv_target = 0; }
   else if (!strcmp(cmd,"home"))  {
-    if (mode != M_IDLE) { Serial.println(F("! stop and place cart at physical center before home")); return; }
+    if (mode != M_IDLE) { checkedPrintln(F("! stop and place cart at physical center before home")); return; }
     home_steps = ax_pos[AX_CART];
-                                   Serial.println(F("# x = 0 here")); }
+                                   checkedPrintln(F("# x = 0 here")); }
   else if (!strcmp(cmd,"zhome")) { zhome_steps = ax_pos[AX_Z1];
-                                   Serial.println(F("# z = 0 here")); }
+                                   checkedPrintln(F("# z = 0 here")); }
   else if (!strcmp(cmd,"zero"))  { eStop(); req_zero = true;
-                                   Serial.println(F("# zeroing: hold the pendulum still, hanging...")); }
+                                   checkedPrintln(F("# zeroing: hold the pendulum still, hanging...")); }
   else if (!strcmp(cmd,"mag"))   { req_diag = true; }
-  else if (!strcmp(cmd,"rate"))  { tele_hz = a1 ? atoi(a1) : 0;
-                                   Serial.printf("# telemetry %u Hz\n", tele_hz); }
+  else if (!strcmp(cmd,"rate"))  { tele_hz = a1 ? constrain(atoi(a1),0,100) : 0;
+                                   checkedPrintf("# telemetry %u Hz\n", tele_hz); }
   else if (!strcmp(cmd,"params")){ printParams(); }
   else if (!strcmp(cmd,"get")) {
     for (int i=0;i<N_PARAMS;i++)
-      if (a1 && !strcmp(a1,PARAMS[i].name)) { Serial.printf("= %s %.5f\n",PARAMS[i].name,*PARAMS[i].ptr); return; }
-    Serial.println(F("! no such param"));
+      if (a1 && !strcmp(a1,PARAMS[i].name)) { checkedPrintf("= %s %.5f\n",PARAMS[i].name,*PARAMS[i].ptr); return; }
+    checkedPrintln(F("! no such param"));
   }
   else if (!strcmp(cmd,"set")) {
     char *a2 = strtok(nullptr," \t");
-    if (!a1 || !a2) { Serial.println(F("! usage: set <key> <value>")); return; }
+    if (!a1 || !a2) { checkedPrintln(F("! usage: set <key> <value>")); return; }
     for (int i=0;i<N_PARAMS;i++) if (!strcmp(a1,PARAMS[i].name)) {
       char *end = nullptr;
       float want = strtof(a2, &end);
       if (end == a2 || *end || !isfinite(want)) {
-        Serial.println(F("! expected a finite number")); return;
+        checkedPrintln(F("! expected a finite number")); return;
       }
       float *ptr = PARAMS[i].ptr;
       const bool motion_limit = ptr == &p_vmax || ptr == &p_amax_s ||
           ptr == &p_amax_b || ptr == &p_jmax || ptr == &p_rail ||
           ptr == &p_amax_m || ptr == &p_jmax_m;
-      if (motion_limit && mode != M_IDLE) {
-        Serial.println(F("! stop before changing motion limits")); return;
+      const bool gain_change=PARAMS[i].recalc || ptr==&controller.bal_pw || ptr==&p_bw ||
+          ptr==&K1 || ptr==&K2 || ptr==&K3 || ptr==&K4;
+      if ((motion_limit || gain_change) && mode != M_IDLE) {
+        checkedPrintln(F("! stop before changing motion limits or balance gains")); return;
       }
       if (((motion_limit || ptr == &p_leff || ptr == &p_bw || ptr == &p_phase_soft) && want <= 0) ||
-          (ptr == &p_rail && want <= rail_recovery::edge_margin+rail_recovery::center_tolerance) ||
+          (ptr == &p_rail && want <= rail_recovery::edge_margin+rail_recovery::inside_hysteresis) ||
           (ptr == &p_vmax && want > VMAX_CEIL)) {
-        Serial.printf("! invalid motion limit (vmax ceiling %.5f m/s)\n", VMAX_CEIL);
+        checkedPrintf("! invalid motion limit (vmax ceiling %.5f m/s)\n", VMAX_CEIL);
         return;
+      }
+      if((ptr==&controller.bal_pw && (want<1 || want>20)) ||
+         ((ptr==&p_pw || ptr==&p_pz) && want<=0) ||
+         ((ptr==&p_pc1 || ptr==&p_pc2) && want>=0)){
+        checkedPrintln(F("! invalid poles: bal_pw 1..20, pw/pz positive, pc1/pc2 negative"));return;
       }
       *PARAMS[i].ptr = want;
       if (PARAMS[i].recalc) computeGains();
-      Serial.printf("= %s %.5f\n", PARAMS[i].name, *PARAMS[i].ptr);
+      checkedPrintf("= %s %.5f\n", PARAMS[i].name, *PARAMS[i].ptr);
       return;
     }
-    Serial.println(F("! no such param"));
+    checkedPrintln(F("! no such param"));
   }
   else if (!strcmp(cmd,"stat")) {
-    Serial.printf("# mode=%s energized=%d theta=%+.3f thd=%+.2f x=%+.4f v=%+.3f "
+    checkedPrintf("# mode=%s energized=%d theta=%+.3f thd=%+.2f x=%+.4f v=%+.3f "
                   "z=%.1fmm agc=%d i2c_err=%lu loop=%luus\n",
                   MODE_NAME[mode], (int)g_energized, th, thd, xc, vc, z_mm,
                   enc_agc, (unsigned long)enc_errors, (unsigned long)loop_us);
-    Serial.printf("# ENABLE GPIO27 output=%s (LOW=enabled, HIGH=disabled)\n",
+    checkedPrintf("# ENABLE GPIO27 output=%s (LOW=enabled, HIGH=disabled)\n",
                   (REG_READ(GPIO_OUT_REG) & (1UL<<PIN_EN_ALL)) ? "HIGH" : "LOW");
     float mm_per_rev = PULLEY_TEETH * BELT_PITCH_MM;
-    Serial.printf("# motor %.0f rpm now, %.0f rpm at vmax, %.0f rpm at ceiling "
+    checkedPrintf("# motor %.0f rpm now, %.0f rpm at vmax, %.0f rpm at ceiling "
                   "(%.0f steps/s max)\n",
                   fabsf(vc)*60000.0f/mm_per_rev, p_vmax*60000.0f/mm_per_rev,
                   VMAX_CEIL*60000.0f/mm_per_rev, ISR_HZ*0.5f);
-    Serial.printf("# K = [%.3f %.3f %.3f %.3f]\n", K1,K2,K3,K4);
+    if(inSpinRecovery())checkedPrintf("# overspeed recovery %s; |theta_dot|=%.2f rad/s, resume below %.1f rad/s when centered\n",
+        MODE_NAME[mode],fabsf(thd),spin_recovery::resume_rad_s);
+    checkedPrintf("# serial baud=115200, host timeout=%lu ms, dropped events=%lu\n",(unsigned long)HOST_TIMEOUT_MS,(unsigned long)dropped_control_messages);
+    checkedPrintf("# K = [%.3f %.3f %.3f %.3f]\n", K1,K2,K3,K4);
   }
   else if (!strcmp(cmd,"help")) {
-    Serial.println(F("# auto bal manual v<mps> zv<mmps> zstop stop off on"));
-    Serial.println(F("# home zhome zero mag rate<hz> set get params stat"));
+    checkedPrintln(F("# auto bal manual v<mps> zv<mmps> zstop stop off on"));
+    checkedPrintln(F("# home zhome zero mag enc ping rate<hz> set get params stat"));
   }
-  else Serial.println(F("! unknown command (try 'help')"));
+  else checkedPrintln(F("! unknown command (try 'help')"));
 }
 
 void pollSerial() {
-  static char buf[96]; static uint8_t n = 0;
-  while (Serial.available()) {
-    char c = Serial.read();
-    if (c == '\n' || c == '\r') {
-      if (n) { buf[n] = 0; handleLine(buf); n = 0; }
-    } else if (n < sizeof(buf)-1) buf[n++] = c;
+  static char buf[96];static uint8_t n=0;static bool overflow=false;
+  while(Serial.available()){
+    const char c=Serial.read();
+    if(c=='\n' || c=='\r'){
+      if(overflow)checkedPrintln(F("! command too long; discarded"));
+      else if(n){buf[n]=0;handleLine(buf);}
+      n=0;overflow=false;
+    }else if(!overflow){if(n<sizeof(buf)-1)buf[n++]=c;else overflow=true;}
   }
 }
 
 void emitTelemetry() {
-  Serial.printf("T %lu %d %.4f %.3f %.5f %.4f %.3f %.4f %.2f %.2f %d %lu\n",
+  checkedPrintf("T %lu %d %.4f %.3f %.5f %.4f %.3f %.4f %.2f %.2f %d %lu\n",
                 (unsigned long)millis(), (int)mode, th, thd, xc, vc, acc_cmd,
                 energy_n, z_mm, z_mm, enc_agc, (unsigned long)loop_us);
 }
@@ -778,10 +962,11 @@ void setup() {
   gpio_set_level((gpio_num_t)PIN_EN_ALL, 1);
   pinMode(PIN_EN_ALL, OUTPUT); // Register GPIO with Arduino before digitalWrite().
   g_energized = false;
-  Serial.begin(921600);
-  Serial.setTxBufferSize(2048);
+  Serial.setRxBufferSize(1024);
+  Serial.setTxBufferSize(4096);
+  Serial.begin(115200);
   delay(300);
-  Serial.println(F("\n# ESP32 cart-pole swingup-175mm-20t-v9"));
+  checkedPrintln(F("# ESP32 cart-pole swingup-175mm-60t-v21"));
 
   // I2C comes up FIRST, while nothing else is competing for the CPU. Bringing
   // the 125 kHz step interrupt up first meant the very first bus transactions
@@ -790,11 +975,11 @@ void setup() {
   Wire.setTimeOut(50);
   delay(50);
 
-  Serial.println(F("# scanning i2c..."));
+  checkedPrintln(F("# scanning i2c..."));
   for (uint8_t a = 1; a < 127; a++) {
     Wire.beginTransmission(a);
     if (Wire.endTransmission() == 0)
-      Serial.printf("#   device at 0x%02X%s\n", a,
+      checkedPrintf("#   device at 0x%02X%s\n", a,
                     a == AS5600_ADDR ? "  <- AS5600" :
                     a == 0x06        ? "  <- MT6701, different chip" : "");
     delay(1);
@@ -803,41 +988,48 @@ void setup() {
   encDiagRead();
   enc_last_raw = encReadRaw();
   enc_ok = (enc_last_raw >= 0);
-  if (!enc_ok) { Serial.println(F("! encoder not answering - check SDA=21 SCL=22, "
+  if (!enc_ok) { checkedPrintln(F("! encoder not answering - check SDA=21 SCL=22, "
                                   "3V3, and DIR tied to GND")); enc_last_raw = 0; }
   encPrintMagnet();
-  if (as5600FastFilter()) Serial.println(F("# AS5600 slow filter -> 2x (0.29 ms lag)"));
-  else                    Serial.println(F("! AS5600 CONF write failed"));
+  if (as5600FastFilter()) checkedPrintln(F("# AS5600 slow filter -> 2x (0.29 ms lag)"));
+  else                    checkedPrintln(F("! AS5600 CONF write failed"));
   enc_ticks = 0;
 
   steppersInit();
 
   computeGains();
-  Serial.printf("# cart %.1f steps/mm (1/%d), Z %.1f steps/mm\n",
+  checkedPrintf("# cart %.1f steps/mm (1/%d), Z %.1f steps/mm\n",
                 CART_STEPS_PER_M/1000.0f, CART_MICROSTEPS, Z_STEPS_PER_MM);
-  Serial.printf("# cart speed ceiling %.2f m/s\n", VMAX_CEIL);
+  checkedPrintf("# cart speed ceiling %.2f m/s\n", VMAX_CEIL);
   delay(300);
   encZeroBlocking();
+  checkedPrintf("# balance target: absolute encoder count %d; down-zero does not change this target\n",encoder_reference::upright_raw);
   th_hat = encTheta();
   home_steps = ax_pos[AX_CART];
   zhome_steps = ax_pos[AX_Z1];
-  Serial.printf("# K = [%.3f %.3f %.3f %.3f]\n", K1,K2,K3,K4);
-  Serial.printf("# Cart defaults: leff=%.3f m, vmax=%.3f m/s, amax_s=%.1f, amax_b=%.1f m/s^2, jmax=%.1f m/s^3\n",
+  checkedPrintf("# K = [%.3f %.3f %.3f %.3f]\n", K1,K2,K3,K4);
+  checkedPrintf("# Cart defaults: leff=%.3f m, vmax=%.3f m/s, amax_s=%.1f, amax_b=%.1f m/s^2, jmax=%.1f m/s^3\n",
                 p_leff, p_vmax, p_amax_s, p_amax_b, p_jmax);
-  Serial.println(F("# Startup position is x=0: place cart at physical center before reset; no homing motion."));
-  Serial.println(F("# Travel 300 mm; normal range +/-130 mm. Predictive braking -> stop -> recenter; fault +/-140 mm."));
-  Serial.println(F("# Drivers DISABLED. Motion commands enable; stop disables all drivers."));
-  Serial.println(F("# ready. 'help' for commands."));
+  checkedPrintln(F("# Startup position is x=0: place cart at physical center before reset; no homing motion."));
+  checkedPrintln(F("# Travel 300 mm; normal range +/-135 mm. Predictive braking -> return inside range; fault +/-140 mm."));
+  checkedPrintln(F("# Pendulum |theta_dot| >25 rad/s: brake, center, then resume below 10 rad/s; no full-turn check or dwell."));
+  checkedPrintln(F("# bal: explicit upright-only start within 10deg; >50deg fall brakes, centers and disables; no restart."));
+  checkedPrintln(F("# Drivers DISABLED. Motion commands enable; stop disables all drivers."));
+  checkedPrintln(F("# ready. 'help' for commands."));
 
+  control_messages=xQueueCreate(24,sizeof(ControlMessage));
+  if(!control_messages){eStop();mode=M_FAULT;checkedPrintln(F("! serial event queue allocation failed"));return;}
+  last_host_command_ms=millis();
   xTaskCreatePinnedToCore(controlTask, "ctrl", 4096, nullptr, 5, nullptr, 1);
 }
 
 void loop() {
   pollSerial();
+  flushControlMessages();
 
   if (diag_done) { diag_done = false; encPrintMagnet(); }
   if (zero_done) { zero_done = false;
-                   Serial.printf("# encoder zeroed, theta = %.3f rad\n", th); }
+                   checkedPrintf("# down reference recorded; fixed upright 3416 counts, theta = %.3f rad\n", th); }
   static uint32_t last = 0;
   if (tele_hz) {
     uint32_t period = 1000000UL / tele_hz;

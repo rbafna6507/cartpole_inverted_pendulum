@@ -11,6 +11,17 @@ test('source SHA-256 matches all raw calibration captures and selected control l
  const hash=crypto.createHash('sha256').update(fs.readFileSync(path.join(__dirname,'..',name))).digest('hex');assert.equal(hash,s.sha256);}
  assert.equal(D.captures.length,3);assert.equal(D.fit.total_cycles,33);
 });
+test('GUI current and recorded presets retain their own pulley geometry',()=>{
+ const nodes={};const element=id=>nodes[id]||(nodes[id]={value:'',type:typeof E.defaults[id]==='number'?'number':'select',add(){}});
+ const ui={window:{PendulumSim:E,PENDULUM_DATA:D},document:{getElementById:element},Option:function(){}};
+ vm.createContext(ui);vm.runInContext(fs.readFileSync(path.join(__dirname,'presets.js'),'utf8'),ui);
+ const app=fs.readFileSync(path.join(__dirname,'app.js'),'utf8');
+ vm.runInContext(app.slice(0,app.indexOf("$('run').onclick")),ui);
+ for(const [key,teeth,steps,vmax] of [['current',60,3200/.12,.8],['recorded',20,80000,.75],['upright',60,3200/.12,.8]]){
+  element('preset').value=key;element('preset').onchange();
+  const p=vm.runInContext('read()',ui);assert.equal(p.pulleyTeeth,teeth);near(p.stepsPerM,steps,.00001);near(p.vmax,vmax);assert.equal(Number(element('microsteps').value),16);
+ }
+});
 test('JavaScript motion governor matches current compiled C++ firmware header',()=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'pendulum-parity-'));
  try{
@@ -18,6 +29,8 @@ test('JavaScript motion governor matches current compiled C++ firmware header',(
  const lines=cp.execFileSync(bin,{encoding:'utf8'}).trim().split('\n');
  for(const line of lines){const [tag,...rest]=line.split(' ');const v=rest.map(Number);
  if(tag==='gain')E.gains(E.defaults).forEach((x,i)=>near(x,v[i],1e-5));
+ else if(tag==='upright_gain')E.gains({...E.defaults,pw:E.defaults.bal_pw}).forEach((x,i)=>near(x,v[i],1e-5));
+ else if(tag==='geometry'){const [teeth,steps,vmax,amax,jerk]=v;assert.equal(teeth,E.defaults.pulleyTeeth);near(steps,E.defaults.stepsPerM,.003);near(vmax,E.defaults.vmax,1e-6);near(amax,E.defaults.amax_s);near(jerk,E.defaults.jmax);near(steps/1000,D.controller.hardware.cart_steps_per_mm,.00001);}
  else if(tag==='capture'){const [q,w,x,velocity,a,expected]=v;assert.equal(Number(E.canCapture(E.defaults,q,w,x,velocity,a)),expected);}
  else {const [x,request,velocity,a,nv,na,brake]=v;
  const s=E.advance({v:velocity,a,brake:0},x,request,{...E.defaults,vmax:1.5,amax_s:6,amax_b:6,jmax:150},6,.001);near(s.v,nv,2e-6);near(s.a,na,2e-6);assert.equal(s.brake,brake);}}
@@ -63,14 +76,62 @@ test('invalid values and missing replay input fail clearly',()=>{
  for(const p of [{jmax:0},{amax_s:-1},{vmax:NaN},{duration:Infinity},{leff:0},{style:'bad'},{initialX:.145}])assert.throws(()=>E.simulate(p));
  assert.throws(()=>E.simulate({scenario:'replay'}));
 });
-test('automatic rail recovery stops, recenters, and resumes within software rail limits',()=>{
- for(const initialX of [-.131,.131]){
+test('automatic rail recovery returns inside without seeking center',()=>{
+ for(const initialX of [-.136,.136]){
   const r=E.simulate({initialX,duration:5});
   assert.equal(r.summary.fault,null);
-  assert.ok(r.events.some(e=>e.event==='recenter complete'));
-  assert.ok(r.trace.some(s=>s.mode==='recenter'));
+  assert.ok(r.events.some(e=>e.event==='return inside complete'));
+  assert.ok(r.trace.some(s=>s.mode==='rail_return'));
   assert.ok(r.summary.peakPulseX<.14);
+  const end=r.events.find(e=>e.event==='return inside complete').t;
+  const after=r.trace.find(s=>s.t>=end);
+  assert.ok(Math.abs(after.pulseX)>.12, 'recovery must finish near edge, not center');
  }
- const r=new E.RailRecovery();assert.ok(!r.atEdge(.129,.15));assert.ok(r.atEdge(.131,.15));
+ const r=new E.RailRecovery();assert.ok(!r.atEdge(.134,.15));assert.ok(r.atEdge(.136,.15));
+});
+test('angular rate threshold trips immediately in either direction without a full turn',()=>{
+ for(const w of [0,24.999,25,-24.999,-25])assert.equal(E.spinTrigger(w),false);
+ for(const w of [25.001,-25.001,30,-30])assert.equal(E.spinTrigger(w),true);
+});
+test('rate recovery requires centered stopped cart and valid rate strictly below 10',()=>{
+ const s=new E.SpinRecovery(),cart={v:0,a:0};
+ const tick=(t,{x=0,omega=0,valid=true}={})=>s.update(x,cart,omega,valid,t);
+ for(const omega of [10,-10,25,-25]){
+  s.begin(0);assert.equal(tick(0,{omega}),false);assert.equal(s.phase,3);
+  assert.equal(tick(60000000,{omega}),false);assert.equal(s.timedOut(60000000),false);
+  assert.equal(tick(60000000,{omega:Math.sign(omega)*9.999}),true);
+ }
+ s.begin(0);assert.equal(tick(0,{valid:false}),false);assert.equal(tick(0),true);
+ s.begin(0);assert.equal(tick(0,{x:.01}),false);
+ cart.v=.006;assert.equal(tick(0),false);cart.v=0;
+ cart.a=.101;assert.equal(tick(0),false);cart.a=0;assert.equal(tick(0),true);
+ s.begin(0);tick(0,{omega:12});assert.equal(tick(60000000,{x:.01}),false);
+ assert.equal(s.phase,2);assert.equal(s.timedOut(60000000),false);assert.equal(s.timedOut(70000001),true);
+ s.reset();const start=0xffff0000;s.begin(start);
+ assert.equal(s.timedOut((start+10000000)>>>0),false);assert.equal(s.timedOut((start+10000001)>>>0),true);
+});
+test('overspeed plant recovery trips immediately, centers and resumes below 10 in both directions',()=>{
+ for(const initialOmega of [-30,30]){
+  const r=E.simulate({initialOmega,initialX:.05,duration:30});
+  assert.equal(r.summary.fault,null);assert.ok(r.summary.spinRecoveries>=1);
+  assert.equal(r.events.find(e=>e.event==='pendulum overspeed recovery').t,0);
+  const end=r.events.find(e=>e.event==='spin recovery complete');assert.ok(end);
+  assert.ok(Math.abs(end.omega)<10);assert.ok(Math.abs(end.x)<=.003);
+  assert.ok(Math.abs(end.velocity)<=.005);assert.ok(Math.abs(end.acceleration)<=.1);
+  assert.ok(r.summary.peakPulseX<.14);assert.ok(r.summary.peakJ<=E.defaults.jmax+.00001);
+ }
+});
+test('upright trial abort is latched, signed 50deg fall centers, and rail abort never pumps',()=>{
+ for(const sign of [-1,1]){
+  // Start beyond trip deliberately to exercise recovery, not the hardware start gate.
+  const fall=E.simulate({scenario:'balance',initialAngle:sign*51,initialX:sign*.03,duration:8});
+  assert.equal(fall.events[0].event,'upright fall >50deg');
+  assert.ok(fall.events.some(e=>e.event==='upright centered; stopped'));
+  assert.ok(fall.trace.every(s=>!['swing','spin_wait'].includes(s.mode)));
+  const end=fall.trace.at(-1);assert.equal(end.mode,'idle');assert.ok(Math.abs(end.pulseX)<=.003);assert.equal(end.v,0);
+  const rail=E.simulate({scenario:'balance',initialAngle:sign*10,duration:8});
+  assert.ok(rail.events.some(e=>e.event==='upright predictive rail protection'));
+  assert.equal(rail.trace.at(-1).mode,'idle');assert.ok(rail.trace.every(s=>s.mode!=='swing'));assert.equal(rail.summary.fault,null);
+ }
 });
 console.log(`${checks} test groups passed.`);

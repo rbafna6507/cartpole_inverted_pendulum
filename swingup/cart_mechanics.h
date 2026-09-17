@@ -3,17 +3,19 @@
 // Shared pulse/drive geometry. This ceiling describes pulse generation,
 // not the motor's measured torque or ability to follow the commands.
 namespace cart_hardware {
-constexpr int motor_steps = 200, microsteps = 16, pulley_teeth = 20;
+constexpr int motor_steps = 200, microsteps = 16, pulley_teeth = 60;
 constexpr float belt_pitch_mm = 2.0f;
-constexpr int isr_hz = 125000;
+// Use one exact integer-microsecond timer period everywhere, including DDS.
+constexpr unsigned step_timer_period_us = 7;
+constexpr double isr_hz = 1000000.0 / step_timer_period_us;
 constexpr float mm_per_rev = pulley_teeth * belt_pitch_mm;
-// User-tested motor limits with the 20T pulley (2026-09-16).
-constexpr float tested_speed_rpm = 1125.0f;
-constexpr float tested_acceleration_rpm_s = 22500.0f;
-constexpr float default_speed = tested_speed_rpm * mm_per_rev / 60000.0f;
-constexpr float default_acceleration = tested_acceleration_rpm_s * mm_per_rev / 60000.0f;
-constexpr float requested_jerk_rpm_s2 = 75000.0f;
-constexpr float default_jerk = requested_jerk_rpm_s2 * mm_per_rev / 60000.0f;
+// Linear limits stay fixed when pulley geometry changes (60T, 2026-09-17).
+constexpr float default_speed = 0.8f;         // m/s
+constexpr float default_acceleration = 12.0f; // m/s^2
+constexpr float default_jerk = 60.0f;         // m/s^3
+constexpr float requested_speed_rpm = default_speed * 60000.0f / mm_per_rev;
+constexpr float requested_acceleration_rpm_s = default_acceleration * 60000.0f / mm_per_rev;
+constexpr float requested_jerk_rpm_s2 = default_jerk * 60000.0f / mm_per_rev;
 constexpr float steps_per_m = motor_steps * microsteps * 1000.0f / mm_per_rev;
 constexpr float max_speed = (isr_hz * 0.5f) * mm_per_rev /
                             (motor_steps * microsteps * 1000.0f);

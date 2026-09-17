@@ -7,30 +7,35 @@ travel and frequency, preview position/velocity/acceleration/jerk, and run the
 cart manually. It uses a separate ESP32 test sketch. Swing-up auto-tuning is
 paused during these tests.
 
-## Run the swing-up sketch (20T pulley, 300 mm travel)
+## Run the swing-up sketch (60T pulley, 300 mm travel)
+
+**v21 requires reflashing for the 60T pulley and cart STEP25/DIR26 mapping.** `params` should report
+`pulley_teeth 60`, `cart_mm_per_rev 120`, and `cart_steps_per_m 26666.67`.
 
 `swingup/swingup.ino` runs on the ESP32; `cartpole.py` is its Mac console.
-The swing-up cart pins are **STEP = GPIO18, DIR = GPIO19**.
-Z1 uses **STEP = GPIO25, DIR = GPIO26**; Z2 uses **STEP = GPIO16 (RX2), DIR = GPIO17 (TX2)**.
+The swing-up cart pins are **STEP = GPIO25, DIR = GPIO26**.
+Z1 uses **STEP = GPIO18, DIR = GPIO19**; Z2 uses **STEP = GPIO16 (RX2), DIR = GPIO17 (TX2)**.
 The older sketches below retain their own wiring.
 Place the cart at the **physical center** before power-up/reset, and let the
-pendulum hang still while the encoder zeros. Startup assigns `x = 0` there;
+pendulum hang still while the encoder records its down reference. Startup assigns `x = 0` there;
 there is **no homing movement**. The sketch boots idle with **all drivers disabled** and these cart limits:
 
 | Setting | Default |
 |---|---:|
 | Total physical travel | 300 mm (±150 mm from startup center) |
-| Maximum speed (`vmax`) | 0.75 m/s (1125 RPM) |
-| Swing-up acceleration limit (`amax_s`) | 15 m/s² (22,500 RPM/s) |
-| Balance/braking acceleration limit (`amax_b`) | 15 m/s² (22,500 RPM/s) |
+| Maximum speed (`vmax`) | 0.8 m/s (400 RPM) |
+| Swing-up acceleration limit (`amax_s`) | 12 m/s² (6,000 RPM/s) |
+| Balance/braking acceleration limit (`amax_b`) | 12 m/s² (6,000 RPM/s) |
 | Manual acceleration limit (`amax_m`) | 0.5 m/s² |
-| Automatic jerk limit (`jmax`) | 50 m/s³ (75,000 RPM/s²) |
+| Automatic jerk limit (`jmax`) | 60 m/s³ (30,000 RPM/s²) |
 | Manual jerk limit (`jmax_m`) | 10 m/s³ |
 | Keyboard jog speed (`vman`) | 0.05 m/s |
 
-The 20T pulley and 2 mm belt pitch give 40 mm/revolution and 80 steps/mm
-at 1/16 microstepping. Automatic jerk is 50 m/s³: acceleration changes by
-at most 0.05 m/s² per 1 ms tick, taking 300 ms from zero to 15 m/s².
+The 60T pulley and 2 mm belt pitch give 120 mm/revolution and 26.666667 steps/mm
+at 1/16 microstepping. Automatic jerk is 60 m/s³: acceleration changes by
+at most 0.06 m/s² per 1 ms tick, taking 200 ms from zero to 12 m/s².
+A 7 µs pulse timer supports up to 71,429 steps/s (2.679 m/s pulse ceiling; configured limit remains 0.8 m/s); 0.8 m/s
+requires 21,333 steps/s. DDS scaling uses the same timer period.
 Manual jogging keeps its gentler acceleration and jerk limits.
 `stop`, `off`, and faults stop pulses and **disable all three drivers**.
 Startup drives the shared active-low ENABLE pin HIGH before serial delays,
@@ -38,23 +43,67 @@ I2C initialization or encoder zeroing. Support the height assembly while
 motors are disabled. Firmware cannot control GPIO during the earlier reset/bootloader interval.
 There are no `fast` or `slow` profiles; motion commands use the current limits.
 
+### Measured upright reference (v14)
+
+The recorded **180° / upright = 3416 raw counts** is now the fixed `theta = 0`
+reference for balance, capture gating, swing-up and telemetry. Startup and `zero`
+record the down reference for diagnostics; they do **not** replace this upright
+reference. `params` reports `encoder_upright_raw 3416`. Flash the current v15 firmware to apply it.
+The polarity remains `ENC_INVERT=0`; the linear scale remains 4096 counts/turn.
+The 90° and 270° readings are shown in the
+[calibration plot](encoder_calibration/encoder_20260916_135926_031977_linearity.png),
+with [assessment](analysis/encoder_reference_v14.md). No quadrant correction is
+applied: these single samples include serial-integrity concerns.
+
+### Pendulum spin failsafe
+
+**v18 trips immediately above |θ̇| = 25 rad/s and releases below 10 rad/s. Reflash to apply it.**
+`params` reports `spin_trip_rad_s 25` and `spin_resume_rad_s 10`.
+
+The filtered angular-speed magnitude **above 25 rad/s** latches
+`SPIN_BRAKE → SPIN_CENTER → SPIN_WAIT` in either rotation direction.
+It monitors automatic swing-up, automatic balance, and automatic rail recovery.
+The upright-only `bal` trial retains its separate fall-return-stop behavior.
+There is no full-turn requirement, pendulum-angle gate, or quiet-time delay.
+
+Pendulum control pauses while the cart brakes, then returns to its original
+center at up to **0.10 m/s**, with a **0.5 m/s²** return acceleration target and
+the existing jerk limit. Braking still uses the normal motion/rail protections.
+SWINGUP resumes only once the cart is within **±3 mm** of center,
+|cart velocity| ≤ 0.005 m/s, |cart acceleration| ≤ 0.1 m/s², and a valid
+encoder estimate has **|θ̇| strictly below 10 rad/s**. Exactly 10 rad/s keeps
+waiting. The separate thresholds prevent repeated switching near the trip rate.
+Waiting can continue indefinitely; failure to center within 10 seconds faults
+and disables the motors. Ordinary edge recovery still only returns inside the
+270 mm operating region; this rate failsafe specifically returns to center.
+
+Drivers remain enabled to hold center during recovery. `stop`/`off` cancel it
+and disable all drivers immediately. Repeated `auto`, `bal`, and jog commands
+cannot bypass an active recovery. `stat` shows its phase, current rate, and
+release threshold.
+There is no homing or direct cart-position measurement; the center reference
+still relies on commanded steps and can be wrong after physical slipping.
+
 ### Rail recovery
 
 The physical ends are at ±150 mm from the startup center. Normal operation may
-use the central **260 mm (±130 mm)**. Entering the last 20 mm at either end
-starts `RAIL_BRAKE`: pendulum control pauses, and the cart slows to rest.
+use the central **270 mm (±135 mm)**. Entering the last 15 mm at either end
+starts `RAIL_BRAKE`: pendulum control pauses while outward motion decelerates.
 Predictive braking can start earlier when velocity and acceleration require it;
-it aims to stop before ±135 mm. At 0.75 m/s with zero acceleration and jerk
-50 m/s³, stopping requires about **86.6 mm**, so waiting for the final 20 mm
-would not be safe.
+it aims to stop before ±135 mm. At 0.8 m/s with zero acceleration and jerk
+60 m/s³, stopping requires about **87.1 mm**, so braking cannot wait for the
+last 15 mm at full speed.
 
-After braking, `RECENTER` requests a return speed up to 0.15 m/s and return
+After braking, `RAIL_RETURN` requests an inward speed up to 0.15 m/s and
 acceleration up to 1.5 m/s² (or lower configured limits), still jerk limited.
-Once within ±3 mm of the existing center reference, with |v|≤0.01 m/s and
-|a|≤0.1 m/s² for 100 ms, automatic operation resumes SWINGUP. Manual recovery
-ends IDLE with drivers disabled. Held manual jog commands are ignored during
-recovery; `stop` always cancels recovery and disables all drivers. Recovery
-never resets the position reference. It times out to a disabled fault after 8 s.
+Automatic operation resumes SWINGUP once back inside **±130 mm**, moving inward
+or nearly stopped with inward acceleration. This 5 mm inset prevents repeated
+boundary triggering; there is no center-seeking or dwell. If predictive braking
+reverses the cart farther inside, control resumes there immediately.
+Manual recovery resumes MANUAL with a zero velocity target. Held jog commands
+are ignored during recovery; `stop` always cancels recovery and disables all
+drivers. Recovery never resets the position reference. It times out to a
+disabled fault after 8 s.
 
 The independent fault boundary remains ±140 mm. Position is inferred from
 commanded steps, not sensed at the ends; missed steps or manual movement can
@@ -86,7 +135,13 @@ auto
 `auto` enables the drivers, starts swing-up and switches to balance when eligible.
 `stat` reports the ENABLE output: LOW means enabled, HIGH means disabled.
 v9 fixes v8 GPIO initialization that could report energized while ENABLE stayed HIGH.
-Space or `stop` disables all drivers. No profile command is needed.
+While plotting, type **`stop` + Enter in the terminal**, click **STOP / disable**,
+or press **Space/Escape in the plot**. In the terminal, Escape or Space at an
+empty prompt also sends stop immediately. `q` + Enter exits the plot and stops.
+Other terminal commands, including `set`, work while plotting. A/D/W/S jogging
+is available in the `control` plot window; terminal letters form commands.
+Restart `cartpole.py` to load this console change. Reflash v15 for the serial fixes, calibrated upright, rail
+behavior and limits. No profile command is needed.
 After moving the disabled cart by hand, place it at physical center and issue
 `home` before starting again; commanded steps cannot observe manual movement.
 Height-axis limits remain 2 mm/s and 20 mm/s².
@@ -94,10 +149,10 @@ Height-axis limits remain 2 mm/s and 20 mm/s².
 To change limits, first send `stop`, then for example:
 
 ```text
-set vmax 0.75
-set amax_s 15
-set amax_b 15
-set jmax 50
+set vmax 0.8
+set amax_s 12
+set amax_b 12
+set jmax 60
 set rail 0.15
 ```
 
@@ -113,7 +168,7 @@ metadata, not automatically loaded by this sketch. The current model uses
 175 mm captures. [Fit provenance and controller validation](analysis/swingup_validation.md)
 explain the measurement and its limits.
 
-The revised `swingup-175mm-20t-v9` firmware uses smooth phase feedback for energy
+The revised `swingup-175mm-20t-v15` firmware uses smooth phase feedback for energy
 pumping, cart centering, a gentle startup bias, and a balance handoff that also
 checks cart position, speed headroom, approach direction, and acceleration ramp time.
 The capture window opens at 0.60 rad (34.4°), with angular rate below 3 rad/s;
@@ -124,7 +179,7 @@ pendulum response. This detects gross non-response; it does **not** detect every
 missed step. Buzzing with little physical movement still needs a motor/driver
 check and a fresh physical center reference. Verify manual motion first. Motion-limit regressions pass for this revision, but
 recorded-state simulations remain imperfect: some cases settle in the ideal
-model despite failing physically. See [rail recovery assessment](analysis/rail_recovery_v9.md) and the earlier [v8 assessment](analysis/v8_assessment.md).
+model despite failing physically. See [current change assessment](analysis/rail_recovery_v10.md) and the earlier [v8 assessment](analysis/v8_assessment.md).
 
 The console now saves `logs/run_<timestamp>_events.jsonl` alongside each CSV.
 It records outgoing commands, firmware identity, parameter replies, diagnostic
@@ -183,10 +238,71 @@ With the new detector, those captures qualify as quiet at approximately
 19.1 seconds and 25.1 seconds respectively. This is an offline replay, not a
 new hardware measurement.
 
+## Serial integrity and encoder recording (v15)
+
+**Flash v15 and restart the updated console together.** They use **115200 baud**
+and **25 Hz telemetry** (maximum 100 Hz). Replies carry a CRC-16 checksum,
+including telemetry, raw encoder readings, parameters and STOP acknowledgments.
+Dropped digits and minus signs are rejected even when the remaining text looks
+like a valid number. Host commands remain newline-delimited text.
+
+The console sends keepalives every 250 ms without depending on parameter replies.
+Firmware disables active motion after 1.5 seconds without host commands. The
+console sends STOP after a one-second telemetry gap, retries STOP/rate commands
+once per second as needed, and requires a valid STOP acknowledgment and three
+consecutive valid telemetry samples before permitting a new motion command.
+It never replays a previous run. Startup follows the same STOP acknowledgment
+check. A blocked `auto`/`bal` stays at the prompt instead of opening a dashboard.
+
+Type **`link`** in the terminal (also while plotting) for the exact blocking
+reason, valid sample rate, and checked/rejected frame counts. Malformed frames
+and blocked requests are logged. Automatic recovery retries the same serial
+path; a different port name needs a console restart with the new `--port`.
+Check physical cart center after a USB reconnect/reset before restarting motion.
+
+The 14:06–14:09 sessions show dropped characters, stale telemetry and one
+`Device not configured` disconnect. Lower baud/traffic and chunked host reads
+reduce serial load; checksums detect corruption rather than reconstruct missing
+bytes. Physical USB reliability still requires a run on the hardware. See
+[serial investigation](analysis/serial_integrity_v15.md).
+
+For explicit diagnostics with old firmware only, the console accepts
+`--legacy-serial --baud 230400` for v13/v14 (`921600` for older swing-up versions).
+Unchecked legacy data cannot reliably detect dropped digits. The calibration
+recorder now requires v15 checksummed replies, preserving the original captured
+files and the current 3416-count balance target.
+
+After flashing v15, close the console and run:
+
+```bash
+python3 calibrate_encoder.py --port /dev/cu.usbserial-0001
+```
+
+Hold the pendulum manually at each prompt and press Enter:
+
+1. **0°** — hanging down.
+2. **90°** — horizontal toward positive cart travel.
+3. **180°** — upright.
+4. **270°** — horizontal toward negative cart travel.
+
+All motor drivers remain disabled. Each Enter records **one raw encoder reading**
+and immediately saves it under `encoder_calibration/`. The JSON contains the
+four reference angles and their raw counts, plus the original readings and
+sensor diagnostic flags. Use `--samples 20` only if you want multiple readings
+and a circular mean at each position.
+
+The recorder does not reject motion, magnet flags, offsets, or quadrant spacing.
+Unreadable serial replies are retried five times, then the same position prompt
+remains available to retry. Earlier readings remain saved. These values form the
+recorded calibration table; firmware correction is not automatically applied by the recorder. The current
+v15 firmware retains the saved 3416-count upright reference described above.
+This serial update requires v15 firmware; older replies are rejected by default.
+
 ## Original cartpole_esp32 sketch
 
 The remaining instructions describe the separate `cartpole_esp32` sketch,
-including its older pulley and slow boot defaults. For the 20T / 300 mm setup,
+including its older wiring and slow boot defaults. Its pulley conversion is also
+60T; its linear limits are preserved. For the current 60T / 300 mm setup,
 use the `swingup` commands above.
 
 ```
@@ -216,13 +332,12 @@ three axes with a single register write. Don't relocate them above GPIO 31.
 | GND | AS5600 GND **and its DIR pin** | DIR must not float |
 
 Leave MS1/MS2/MS3 unconnected on **all three** drivers. The Big Easy Driver
-pulls them high for its 1/16 default: 80 steps/mm on a 20T GT2 belt, 640
+pulls them high for its 1/16 default: 26.667 steps/mm on a 60T GT2 belt, 640
 steps/mm on a 5 mm ball-screw lead.
 
-That default caps cart speed at 0.5 m/s, because the step generator needs two
-timer ticks per pulse to meet the A4988's minimum high and low times, and the
-timer runs at 80 kHz. If you want a faster cart later, a 40T pulley halves the
-steps/mm and doubles the ceiling — cheaper than wiring three more signals.
+The legacy sketch uses a 120 kHz configured timer and a 60T pulley. Its
+configured fast profile remains 0.72 m/s and slow profile remains 0.05 m/s.
+Use the swing-up sketch above for the current controller and safety settings.
 
 All driver grounds tie to ESP32 ground. Motor power (24V) goes to **M+ only** —
 the BED's VCC pin is a regulator *output*, not an input.
@@ -365,13 +480,12 @@ prevents the next command from being quick.
 **Lost steps look exactly like bad tuning.** After any crash, check whether the
 reported `x = 0` is still the physical centre of the rail. If it drifted, you're
 losing steps: lower `amax_s`/`vmax`, raise Vref, or raise the motor supply
-voltage. A NEMA 17 at the ~1200 RPM this thing asks for has very little torque
-left on 12V, which is why 24V is the recommendation.
+voltage as appropriate for the driver and motor. The current 60T swing-up
+default of 0.8 m/s corresponds to 400 RPM; the motor supply is 24V.
 
-**The rotor isn't free.** 87 g·cm² through a 6.37 mm pitch radius reflects to
-roughly 0.22 kg of apparent cart mass. On a light cart that's comparable to the
-cart itself, and it's why raising acceleration limits hits a wall sooner than
-the torque numbers suggest.
+**Rotor inertia also matters.** For example, 87 g·cm² through the 60T pulley's
+19.10 mm pitch radius reflects to about 0.024 kg of apparent cart mass. This
+is an illustration; the actual motor and pulley inertia have not been measured.
 
 **Swing-up stalls at a fixed amplitude** → check `v` in the dashboard before
 touching gains. The energy pump does work at a rate proportional to the cart's
@@ -389,3 +503,15 @@ lower `ke` so the pump eases off near the top, or widen `catch_r`.
 Open [Pendulum Lab](simulator175/index.html) in a browser to test acceleration, jerk, speed ceilings, and four stepper input styles against the measured 175 mm pendulum model. Includes calibration overlays, recorded command-waveform replay, comparisons, parameter sweeps, and CSV/JSON exports.
 
 See [simulator documentation](simulator175/README.md) for local serving, model assumptions, source provenance, and validation. Run `node simulator175/test.js` to check the model and firmware-equation parity.
+
+## Manual upright tuning (v17)
+
+Use **`bal` / START upright** after manually raising the pendulum. The new upright-only session accepts a stopped start near upright, aborts beyond **±50° from calibrated upright**, brakes, returns to center and disables. It never switches to swing-up or automatically restarts. Rail protection also ends the trial. Existing motion limits remain **0.8 / 12 / 12 / 60** (speed / swing acceleration / balance acceleration / jerk).
+
+The controller is four-state feedback, not PID. `bal_pw=8` is the simulation-screened first candidate; `set bal_pw 7` restores the old angular response for comparison while stopped. See [upright tuning and hardware procedure](analysis/upright_tuning.md). Compile/upload v17 and restart the Python console before testing; no physical trial has been performed.
+
+## v19 direction trial
+
+After seven v18 upright trials aborted on predictive rail protection and the user observed motion away from the falling side, **v19 sets `CART_INVERT=0` (previously 1)**. `ENC_INVERT=0`, upright raw 3416, `bal_pw=8`, motion limits .8/12/12/60 and ±50° upright abort/centering are retained. `params` now reports `cart_invert` so logs identify the physical direction mapping. The driver writes DIR on the first command as well as reversals; otherwise a first positive command could retain the boot LOW pin level after this polarity change.
+
+Place the cart at physical center before reset/upload; after upload confirm firmware v19 and `cart_invert=0`, then use `data` and **START upright** / `bal` for a near-vertical release. Expected corrective cart motion is toward the falling side. The separate possible 2.9° reference discrepancy is not applied in this trial. [Physical review](analysis/upright_review_20260916/review.md).

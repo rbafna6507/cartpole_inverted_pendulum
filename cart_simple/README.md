@@ -20,7 +20,7 @@ software pulses with a 10,000-pulse/s ceiling (375 mm/s at its calibration).
 STEP is GPIO18, DIR is GPIO19, and shared active-LOW ENABLE is GPIO27; the old
 inline D25/D26 comments do not match the numeric pin assignments.
 Calibration is **200 full steps/rev, 1/16 microstepping, 60T GT2, 120 mm/rev**,
-or 26.667 pulses/mm. The repository's `swingup` sketch uses a separate 20T setup.
+or 26.667 pulses/mm. The repository's `swingup` sketch also uses this 60T conversion; wiring and motion commands differ.
 
 The existing `MAX_AMP_MM = 400` is an input ceiling, not protection for the
 repository's 300 mm rail. Choose amplitude to fit the actual centered travel.

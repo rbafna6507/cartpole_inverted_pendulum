@@ -12,11 +12,12 @@ inline float wrap(float x) { return atan2f(sinf(x), cosf(x)); }
 struct Parameters {
   float leff = 0.166f;              // 33 same-side cycles at 5–20 degrees
   float pw = 7.0f, pz = 0.85f;
+  float bal_pw = 8.0f;             // upright-only trial; auto retains pw
   float pc1 = -0.8f, pc2 = -1.2f;
-  float vmax = cart_hardware::default_speed; // 1125 RPM = 0.75 m/s
-  float amax_s = cart_hardware::default_acceleration; // 22,500 RPM/s
-  float amax_b = cart_hardware::default_acceleration; // 15 m/s^2
-  float jmax = cart_hardware::default_jerk; // 75,000 RPM/s^2 = 50 m/s^3
+  float vmax = cart_hardware::default_speed; // 400 RPM = 0.8 m/s on 60T
+  float amax_s = cart_hardware::default_acceleration; // 18,000 RPM/s
+  float amax_b = cart_hardware::default_acceleration; // 12 m/s^2
+  float jmax = cart_hardware::default_jerk; // 90,000 RPM/s^2 = 60 m/s^3
   float amax_m = 0.5f, jmax_m = 10.0f;
   float ke = 2.0f, kpx = 30.0f, kdx = 0.5f;
   float phase_soft = 1.0f;          // rad/s scale of smooth phase feedback
@@ -33,6 +34,9 @@ inline Gains gains(const Parameters &p) {
   k.k1 = p.leff*k.k3-kGravity-p.leff*(b0+b1*c1+c0);
   k.k2 = p.leff*(k.k4-b1-c1);
   return k;
+}
+inline Gains uprightGains(const Parameters &p) {
+  Parameters upright=p; upright.pw=p.bal_pw; return gains(upright);
 }
 inline float balance(const Gains &k, float theta, float omega, float x, float v) {
   return -(k.k1*theta+k.k2*omega+k.k3*x+k.k4*v);

@@ -5,7 +5,7 @@
 <div class="layout"><aside>
 <div class="section-title">Experiment <span>01</span></div>
 <label>Parameter preset<select id="preset"><option value="recorded">Recorded 20T · jmax 50 · vmax 0.75</option><option value="current">Current firmware snapshot</option></select></label><p id="presetNote" class="note"></p>
-<label>Scenario<select id="scenario"><option value="swing">Automatic swing-up + balance</option><option value="balance">Balance recovery</option><option value="sine">Sinusoidal velocity demand</option><option value="reversal">Velocity reversal</option><option value="decay">Free decay</option><option value="replay">Recorded acceleration waveform</option></select></label>
+<label>Scenario<select id="scenario"><option value="swing">Automatic swing-up + balance</option><option value="balance">Manual upright trial</option><option value="sine">Sinusoidal velocity demand</option><option value="reversal">Velocity reversal</option><option value="decay">Free decay</option><option value="replay">Recorded acceleration waveform</option></select></label>
 <label>Stepper input style<select id="style"></select></label><p id="styleNote" class="note"></p>
 <div class="pair"><label>Duration <small>s</small><input id="duration" type="number" min="0.1" max="120" step="1"></label><label>Start offset <small>°</small><input id="initialAngle" type="number" min="-180" max="180" step="1"></label></div>
 <p class="note">Start offset is from hanging, or from upright for balance recovery.</p>
@@ -28,12 +28,13 @@
 <label>Initial angular rate <small>rad/s</small><input id="initialOmega" type="number" min="-40" max="40" step="0.1"></label><label>Initial cart velocity <small>m/s</small><input id="initialV" type="number" min="-3" max="3" step="0.01"></label><label>Initial cart acceleration <small>m/s²</small><input id="initialA" type="number" min="-100" max="100" step="0.1"></label>
 <p class="note">Lag and tracking fraction are sensitivity assumptions, not fitted motor measurements. STEP pulses drive a smooth mechanical trajectory; resonance and torque are not modeled.</p></details>
 <details><summary>Controller & test signals</summary>
+<label>Upright response · bal_pw <small>rad/s</small><input id="bal_pw" type="number" min="1" max="20" step="0.5"></label>
 <label>Energy gain · ke<input id="ke" type="number" min="0" max="30" step="0.1"></label>
 <div class="pair"><label>Cart position gain<input id="kpx" type="number" min="0" max="200" step="1"></label><label>Cart velocity gain<input id="kdx" type="number" min="0" max="50" step="0.1"></label></div>
 <div class="pair"><label>Estimator bandwidth <small>Hz</small><input id="bw" type="number" min="0.1" max="100" step="1"></label><label>Phase smoothing<input id="phase_soft" type="number" min="0.01" max="20" step="0.1"></label></div>
 <label>Position-stream gain <small>s⁻¹</small><input id="positionGain" type="number" min="1" max="200" step="1"></label>
 <div class="pair"><label>Test speed <small>m/s</small><input id="manualSpeed" type="number" min="0" max="3" step="0.05"></label><label>Test frequency <small>Hz</small><input id="frequency" type="number" min="0.01" max="10" step="0.1"></label></div>
-<p class="note">Capture gates follow the selected recorded/current preset. Balance gains retain the calibrated controller defaults. Test speed/frequency apply to sine and reversal scenarios.</p></details>
+<p class="note">Capture gates follow the selected recorded/current preset. Upright trials use bal_pw (7 baseline, 8 candidate), stop beyond ±50°, and return to center. Test speed/frequency apply to sine and reversal scenarios.</p></details>
 <div class="actions"><button id="run" class="primary">Run experiment <span>↗</span></button><div class="pair"><button id="compare">Compare 4 styles</button><button id="reset">Recorded defaults</button></div></div>
 <div id="error" role="alert"></div>
 </aside><main>

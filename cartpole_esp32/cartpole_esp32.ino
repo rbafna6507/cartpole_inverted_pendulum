@@ -17,8 +17,8 @@
 //       the motor unplugged.
 //    3. Tie the AS5600 module's DIR pin to GND. Floating = undefined count
 //       direction.
-//    4. 24V on M+ (not the VCC pin - that is an output). A NEMA 17 at 1200 RPM
-//       has very little torque left on 12V, and the cart wants that RPM.
+//    4. 24V on M+ (not the VCC pin - that is an output). The 60T cart uses
+//       120 mm of belt travel per motor revolution.
 //
 //  PINOUT
 //    25 cart STEP    26 cart DIR
@@ -27,7 +27,7 @@
 //    27 ENABLE for ALL THREE drivers (active low)
 //    21 SDA          22 SCL          AS5600 on 3V3, DIR pin -> GND
 //    MS1/MS2/MS3 are left UNCONNECTED on all three drivers. The BED pulls
-//    them high, which is its 1/16 default: 80 steps/mm on a 20T GT2 belt,
+//    them high, which is its 1/16 default: 26.667 steps/mm on a 60T GT2 belt,
 //    640 steps/mm on a 5 mm ball-screw lead.
 //
 //  WHY ACCELERATION IS THE CONTROL INPUT
@@ -87,18 +87,12 @@
                                   // leans toward +x
 
 // ========================== MECHANICS =======================================
-// All three drivers run the Big Easy Driver's factory default of 1/16, with
-// MS1/MS2/MS3 left unconnected. That costs top speed on the cart: 1/16 on a
-// 20T GT2 pulley is 80 steps/mm, so 0.5 m/s already needs 40,000 pulses/sec.
-// If you ever want a faster cart, the cheapest fix is a bigger pulley (40T
-// halves the steps/mm); wiring MS1/2/3 for 1/4 step is the other option.
-// Driver default, no MS wiring. 3200 steps/rev, 80 steps/mm on a 20T GT2.
-// If you ever want more headroom without touching the timer: jumper MS3 to GND
-// for 1/8 (40 steps/mm), or MS1+MS3 for 1/4 (20 steps/mm).
+// Big Easy Driver floating MS pins select 1/16: 3200 steps/rev.
+// 60T GT2 gives 120 mm/rev and 26.667 steps/mm.
 #define CART_MICROSTEPS 16        // MS pins floating -> BED default
 #define Z_MICROSTEPS    16        // same
 #define MOTOR_STEPS_REV 200       // 1.8 deg
-#define PULLEY_TEETH    20        // GT2 20T
+#define PULLEY_TEETH    60        // GT2 60T
 #define BELT_PITCH_MM   2.0f
 #define Z_LEAD_MM       5.0f      // SFU1605
 
@@ -111,9 +105,9 @@ static const float Z_STEPS_PER_MM =
 #define CTRL_HZ         1000
 // The A4988 needs >=1 us of STEP high AND >=1 us low, so the DDS spends one
 // timer tick high and at least one low: max step rate is ISR_HZ/2.
-//   80 kHz -> 40 k steps/s -> 0.50 m/s ->  750 rpm
-//  120 kHz -> 60 k steps/s -> 0.75 m/s -> 1125 rpm
-//  150 kHz -> 75 k steps/s -> 0.94 m/s -> 1406 rpm
+//   80 kHz -> 40 k steps/s -> 1.50 m/s ->  750 rpm
+//  120 kHz -> 60 k steps/s -> 2.25 m/s -> 1125 rpm
+//  150 kHz -> 75 k steps/s -> 2.81 m/s -> 1406 rpm
 // 120 kHz is an 8.3 us period and the ISR costs ~1.5 us, so roughly 18% of one
 // core. This is the aggressive setting. If serial drops characters, the board
 // resets, or 'stat' shows loop time climbing past ~250 us, back off to 80000.
@@ -142,7 +136,7 @@ float p_pc2     = -1.6f;
 // physically cannot balance on the slow profile - the cart has to be able to
 // accelerate under a falling pole, and 1 m/s^2 is nowhere near enough. Slow is
 // for checking directions, distances and wiring, nothing more.
-float p_vmax    = 0.05f;   // m/s - hard ceiling is ISR_HZ/2/steps_per_m = 0.5
+float p_vmax    = 0.05f;   // m/s - hard ceiling is ISR_HZ/2/steps_per_m = 2.25
 float p_amax_s  = 0.5f;    // m/s^2 during swing-up
 float p_amax_b  = 1.0f;    // m/s^2 while balancing
 float p_ke      = 0.25f;   // energy pump gain
@@ -445,13 +439,8 @@ void profileSlow() {
   p_zvmax = 2.0f; p_zamax = 20.0f;
 }
 void profileFast() {
-  // vmax sits just under the hard clamp: ISR_HZ/2/steps_per_m = 0.5 m/s. Ask
-  // for more and axSetRate clamps the pulse rate while the controller goes on
-  // believing the larger number - the velocity feedback term becomes fiction
-  // and the balancer computes accelerations from a cart speed that does not
-  // exist. Raise ISR_HZ or fit a 40T pulley to move this ceiling, never vmax
-  // alone.
-  p_vmax = VMAX_CEIL * 0.96f; p_vman = 0.15f; p_amax_s = 9.0f; p_amax_b = 18.0f;
+  // Preserve the previous 20T linear fast-profile limit after the 60T swap.
+  p_vmax = 0.72f; p_vman = 0.15f; p_amax_s = 9.0f; p_amax_b = 18.0f;
   p_zvmax = 15.0f; p_zamax = 120.0f;
 }
 
@@ -828,13 +817,12 @@ void loop() {
 //  so the moment the cart saturates at vmax the acceleration goes to zero and
 //  pumping stops dead for the rest of that half-swing. Watch 'v' in the
 //  dashboard: if it is flat-topped at +-vmax for long stretches, you are
-//  speed-limited, not tuning-limited, and no gain will fix it. A 40T pulley
-//  doubles the ceiling.
+//  speed-limited. The 60T conversion preserves the prior linear speed limits.
 //
 //  LOST STEPS LOOK EXACTLY LIKE BAD TUNING. After any crash, check that the
 //  reported x = 0 is still the physical centre. If it has drifted, you are
 //  losing steps: lower amax/vmax, raise Vref, or raise the motor supply
-//  voltage. Note the rotor itself is not free - 87 g.cm^2 through a 6.37 mm
-//  pitch radius reflects to ~0.22 kg of apparent cart mass, which for a light
-//  cart is comparable to the cart itself.
+//  voltage. Note the rotor itself is not free - an illustrative 87 g.cm^2 through a 19.10 mm
+//  pitch radius reflects to ~0.024 kg of apparent cart mass. Actual inertia
+//  has not been measured.
 // ============================================================================

@@ -4,7 +4,10 @@
 #include <cmath>
 int main(){
   swing_control::Parameters p;auto k=swing_control::gains(p);
+  std::printf("geometry %d %.9g %.9g %.9g %.9g\n",cart_hardware::pulley_teeth,cart_hardware::steps_per_m,p.vmax,p.amax_s,p.jmax);
   std::printf("gain %.9g %.9g %.9g %.9g\n",k.k1,k.k2,k.k3,k.k4);
+  auto uk=swing_control::uprightGains(p);
+  std::printf("upright_gain %.9g %.9g %.9g %.9g\n",uk.k1,uk.k2,uk.k3,uk.k4);
   for(int i=0;i<100;++i){
     float x=.13f*std::sin(i*.37f),request=8*std::sin(i*.61f);
     cart_motion::State s;s.velocity=1.2f*std::sin(i*.19f);s.acceleration=6*std::cos(i*.23f);

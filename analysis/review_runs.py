@@ -44,7 +44,7 @@ def summarize(path, now=None, settle_s=120):
         return {'status': 'deferred', 'reason': str(exc)}
     if int(rows[-1]['mode']) not in (0, 4):
         return {'status': 'deferred', 'reason': 'no final stopped/fault telemetry'}
-    active = [r for r in rows if int(r['mode']) in (2, 3, 5, 6)]
+    active = [r for r in rows if int(r['mode']) in (2, 3, 5, 6, 7, 8, 9, 10, 11)]
     if not any(int(r['mode']) in (2,3) for r in active):
         return {'status': 'no_auto_run'}
     params, snapshots, firmware, faults = {}, [], [], []
@@ -80,7 +80,7 @@ def summarize(path, now=None, settle_s=120):
     for a, b in zip(rows, rows[1:]):
         dt = (b['t_ms'] - a['t_ms']) / 1000
         gaps.append(dt)
-        if int(a['mode']) in (2, 3, 5, 6):
+        if int(a['mode']) in (2, 3, 5, 6, 7, 8, 9, 10, 11):
             duration += dt
         if int(a['mode']) == 3 and int(b['mode']) == 3 and dt <= .1:
             current += dt
@@ -106,6 +106,7 @@ def summarize(path, now=None, settle_s=120):
         'first_10s_max_lift_deg': max(lift(r) for r in active if r['t_ms'] < first_t + 10000),
         'last_10s_max_lift_deg': max(lift(r) for r in active if r['t_ms'] > last_t - 10000),
         'longest_balance_mode_s': longest,
+        'spin_recovery_duration_s': sum((b['t_ms']-a['t_ms'])/1000 for a,b in zip(rows,rows[1:]) if int(a['mode']) in (7,8,9)),
         'rail_recovery_duration_s': sum((b['t_ms']-a['t_ms'])/1000 for a,b in zip(rows,rows[1:]) if int(a['mode']) in (5,6)),
         'peak_commanded_speed_m_s': max(abs(r['v']) for r in active),
         'peak_commanded_accel_m_s2': max(abs(r['accel']) for r in active),

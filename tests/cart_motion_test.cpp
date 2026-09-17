@@ -82,14 +82,19 @@ int main() {
   speedRampRegression();
   velocityTests();
   swing_control::Parameters p;
-  assert(fabsf(p.vmax - 0.75f) < 1e-6f);
-  assert(fabsf(p.amax_s - 15.0f) < 1e-5f);
+  assert(fabsf(p.vmax - 0.8f) < 1e-6f);
+  assert(fabsf(p.amax_s - 12.0f) < 1e-5f);
   assert(fabsf(p.amax_b - p.amax_s) < 1e-6f);
-  assert(fabsf(cart_hardware::steps_per_m - 80000.0f) < 1e-3f);
-  assert(fabsf(cart_hardware::max_speed - 0.78125f) < 1e-6f);
+  assert(fabs(cart_hardware::steps_per_m - (3200.0 / .12)) < .003f);
+  assert(fabsf(cart_hardware::max_speed - (1000000.0f/7/2/(3200.0f / .12f))) < 1e-6f);
   assert(p.vmax < cart_hardware::max_speed);
-  assert(fabsf(p.jmax - 50.0f) < 1e-4f);
-  assert(fabsf(cart_hardware::max_rpm - 1171.875f) < 1e-3f);
+  assert(cart_hardware::pulley_teeth == 60);
+  assert(fabsf(cart_hardware::mm_per_rev - 120) < 1e-6f);
+  assert(fabsf(cart_hardware::requested_speed_rpm - 400) < 1e-3f);
+  assert(fabsf(cart_hardware::requested_acceleration_rpm_s - 6000) < 1e-3f);
+  assert(fabsf(cart_hardware::requested_jerk_rpm_s2 - 30000) < 1e-3f);
+  assert(fabsf(p.jmax - 60.0f) < 1e-4f);
+  assert(fabsf(cart_hardware::max_rpm - (1000000.0f/7/2*60/3200)) < 1e-3f);
   railTests(p.vmax, p.amax_s, p.amax_b, p.jmax);   // current swing-up and balance
   railTests(p.vmax, p.amax_m, p.amax_m, p.jmax_m); // current manual commands
   railTests(1.5f, 10, 18, 500);  // previous high limits

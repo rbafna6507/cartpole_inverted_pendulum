@@ -9,7 +9,7 @@ const baseline={...E.defaults,leff:D.fit.selected_effective_length_m,damping:D.f
   amax_s:logged.amax_s,amax_b:logged.amax_b,
   jmax:logged.jmax,vmax:logged.vmax,rail:logged.rail,
   catch_a:logged.catch_a,catch_r:logged.catch_r,giveup:logged.giveup,
-  stepsPerM:logged.cart_steps_per_m,encoderMs:D.configuration.calibration_snapshot.encoder.average_sample_interval_ms,
+  pulleyTeeth:20,stepsPerM:logged.cart_steps_per_m,encoderMs:D.configuration.calibration_snapshot.encoder.average_sample_interval_ms,
   bw:logged.bw,ke:logged.ke,kpx:logged.kpx,kdx:logged.kdx,
   controllerLength:D.fit.firmware_effective_length_m};
 let formDefaults={...baseline};
@@ -88,7 +88,7 @@ function recording(){const l=D.control_log,s=l.summary;$('logInfo').textContent=
 function tab(name){activeTab=name;for(const e of document.querySelectorAll('.tabpage'))e.hidden=e.id!==name;for(const b of document.querySelectorAll('[data-tab]'))b.classList.toggle('active',b.dataset.tab===name);if(name==='calibration')calibration();else if(name==='recording')recording();else render();}
 function download(filename,content,type){const url=URL.createObjectURL(new Blob([content],{type})),a=document.createElement('a');a.href=url;a.download=filename;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 async function batch(params){$('busy').textContent='Running…';const buttons=[...document.querySelectorAll('button')];buttons.forEach(b=>b.disabled=true);try{for(const [i,p] of params.entries()){add(p);$('busy').textContent=`${i+1} / ${params.length} experiments`;await new Promise(requestAnimationFrame);}render();}finally{buttons.forEach(b=>b.disabled=false);$('busy').textContent='Ready';}}
-$('preset').onchange=()=>{const key=$('preset').value;set(candidates[key]?.parameters||(key==='current'?{...baseline,amax_s:cd.swing_max_acceleration_m_per_s2,amax_b:cd.balance_max_acceleration_m_per_s2,jmax:cd.max_cart_jerk_m_per_s3,vmax:cd.max_cart_speed_m_per_s,catch_a:cd.catch_angle_rad,catch_r:cd.catch_rate_rad_per_s,giveup:cd.giveup_angle_rad}:baseline));$('presetNote').textContent=candidates[key]?.note||'';};
+$('preset').onchange=()=>{const key=$('preset').value;set(candidates[key]?.parameters||(key==='current'?{...baseline,pulleyTeeth:hw.pulley_teeth,stepsPerM:hw.cart_steps_per_mm*1000,amax_s:cd.swing_max_acceleration_m_per_s2,amax_b:cd.balance_max_acceleration_m_per_s2,jmax:cd.max_cart_jerk_m_per_s3,vmax:cd.max_cart_speed_m_per_s,catch_a:cd.catch_angle_rad,catch_r:cd.catch_rate_rad_per_s,giveup:cd.giveup_angle_rad}:baseline));$('presetNote').textContent=candidates[key]?.note||'';};
 $('run').onclick=safe(run);$('style').onchange=styleNote;
 $('scenario').onchange=()=>{if($('scenario').value==='balance'&&Number($('initialAngle').value)===0)$('initialAngle').value=5;else if($('scenario').value==='decay')$('initialAngle').value=15;};
 $('compare').onclick=safe(()=>{const p=read();return batch(Object.keys(E.styles).map(style=>({...p,style})));});

@@ -72,13 +72,13 @@
   "constraints": {
     "total_travel_m": 0.3,
     "startup": "physical center, no homing",
-    "max_speed_m_s": 0.75,
-    "max_rpm": 1125,
+    "max_speed_m_s": 0.8,
+    "max_rpm": 1200,
     "motor_tracking_verified": false,
     "acceleration_increase_requires_motor_tracking_confirmation": true,
     "one_trial_change_per_new_run": true,
     "do_not_reprocess_identical_source_hashes": true,
-    "max_acceleration_m_s2": 15
+    "max_acceleration_m_s2": 12
   },
   "history": [
     {
@@ -137,27 +137,77 @@
     {
       "date": "2026-09-16",
       "decision": "v9 fixes v8 ENABLE initialization: preload HIGH then Arduino pinMode registration. Add central 260 mm edge recovery trigger with earlier predictive braking, stop/recenter/resume, and GPIO output diagnostics. Tests and compile pass; not flashed."
+    },
+    {
+      "date": "2026-09-16",
+      "decision": "User requested usable stop while plotting, 270 mm operation with return just inside range, and 0.8/18/18/100 defaults. v10 updates console input and rail recovery; uses a 7 us pulse timer to accommodate 64000 steps/s. Not flashed.",
+      "assessment": "analysis/rail_recovery_v10.md"
+    },
+    {
+      "date": "2026-09-16",
+      "decision": "User requested vmax=0.8, amax_s=amax_b=16, jmax=70. v11 changes those defaults; retains existing pulse generator, rail behavior and stop controls. Not flashed."
+    },
+    {
+      "date": "2026-09-16",
+      "decision": "Added full-turn overspeed recovery above 50 RPM, return cart to center then require 3 continuous quiet seconds. Defaults unchanged at 0.8/16/16/70; not flashed."
+    },
+    {
+      "date": "2026-09-16",
+      "decision": "User requested serial error fixes, 0.8/12/12/60 defaults and 0/90/180/270 encoder calibration. v13 adds stopped reconnect and host watchdog. Not flashed; no physical calibration collected."
+    },
+    {
+      "candidate": "swingup-175mm-20t-v14",
+      "decision": "Use recorded 180-degree raw count 3416 for balance target, independent of startup/manual down zero. No nonlinear remapping or gain/limit changes."
+    },
+    {
+      "candidate": "swingup-175mm-20t-v15",
+      "decision": "14:06\u201314:09 logs show corrupted replies and a USB disconnect. Add checksummed replies, 115200 baud/25 Hz, independent keepalive and stopped retry recovery. Preserve upright 3416, gains and motion limits; no flash/motion performed."
+    },
+    {
+      "candidate": "swingup-175mm-20t-v16",
+      "decision": "User reports serial resolved after removing motor-breakout feed to ESP32. Raise full-turn overspeed trip from 50 to 200 RPM; preserve centering, below-30-RPM three-second quiet wait and all motion limits."
+    },
+    {
+      "candidate": "swingup-175mm-20t-v18",
+      "decision": "Replace full-turn stopper with immediate filtered |theta_dot| >25 rad/s recovery; center, then resume strictly below 10 rad/s. No angle gate or dwell. Motion limits and gains unchanged."
+    },
+    {
+      "candidate": "swingup-175mm-20t-v19",
+      "decision": "User requested immediate direction flip after upright review. CART_INVERT 1 -> 0; encoder sign, absolute target, gains and limits retained. DIR written on first positive command; pending physical validation."
+    },
+    {
+      "candidate": "swingup-175mm-60t-v20",
+      "decision": "60T pulley; preserve linear 0.8/12/12/60 limits. Convert geometry to 26.666667 steps/mm; retain historical 20T logs and presets."
+    },
+    {
+      "candidate": "swingup-175mm-60t-v21",
+      "decision": "User requested cart STEP25/DIR26; swap Z1 to18/19 to keep all outputs unique. Preserve Z2 16/17 and all motion limits."
     }
   ],
   "current_user_requested_settings": {
-    "firmware_id": "swingup-175mm-20t-v9",
-    "cart_step_gpio": 18,
-    "cart_dir_gpio": 19,
-    "vmax": 0.75,
-    "amax_s": 15,
-    "amax_b": 15,
-    "jmax": 50,
+    "firmware_id": "swingup-175mm-60t-v21",
+    "cart_step_gpio": 25,
+    "cart_dir_gpio": 26,
+    "vmax": 0.8,
+    "amax_s": 12,
+    "amax_b": 12,
+    "jmax": 60,
     "ke": 2.0,
-    "physical_trial": "pending; not flashed",
-    "validation": "See analysis/rail_recovery_v9.md; includes ENABLE registration fix and latched rail recovery. Full swing-up capture remains unproven.",
-    "z1_step_gpio": 25,
-    "z1_dir_gpio": 26,
-    "pulley_teeth": 20,
+    "physical_trial": "v20 uploaded and verified; v21 pin swap not uploaded",
+    "validation": "v21 pin/driver harness, 16 simulator groups and ESP32 compile pass; not uploaded.",
+    "z1_step_gpio": 18,
+    "z1_dir_gpio": 19,
+    "pulley_teeth": 60,
     "z2_step_gpio": 16,
     "z2_dir_gpio": 17,
-    "jerk_rpm_per_s2": 75000,
+    "jerk_rpm_per_s2": 30000,
     "boot_drivers_enabled": false,
-    "stop_disables_all_drivers": true
+    "stop_disables_all_drivers": true,
+    "spin_trip_rad_s": 25,
+    "spin_resume_rad_s": 10,
+    "cart_direction_inverted": false,
+    "speed_rpm": 400,
+    "acceleration_rpm_per_s": 6000
   },
   "latest_user_observed_baseline": {
     "recorded_date": "2026-09-16",
@@ -174,5 +224,16 @@
     "motor_tracking_evidence": "User observation; no independent cart encoder.",
     "review": "analysis/run_reviews/20260916_latest_runs.md",
     "firmware_defaults_changed": false
+  },
+  "upright_only_trial": {
+    "firmware_id": "swingup-175mm-20t-v19",
+    "bal_pw": 8,
+    "baseline_bal_pw": 7,
+    "motion_limits_changed": false,
+    "fall_angle_deg": 50,
+    "restart": "explicit bal only",
+    "status": "v18 trials reviewed; v19 direction flip prepared, not uploaded",
+    "evidence": "analysis/upright_tuning.json",
+    "instructions": "analysis/upright_tuning.md"
   }
 }

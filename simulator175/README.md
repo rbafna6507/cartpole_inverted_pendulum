@@ -1,10 +1,10 @@
 # 175 mm Pendulum Lab
 
-Offline browser simulator for the 20T cart, 175 mm pendulum and 300 mm rail. Open `index.html` directly or serve the repository using `python3 -m http.server 8765 --bind 127.0.0.1`, then open `/simulator175/`.
+Offline browser simulator for the 60T cart, 175 mm pendulum and 300 mm rail. Open `index.html` directly or serve the repository using `python3 -m http.server 8765 --bind 127.0.0.1`, then open `/simulator175/`.
 
 ## Current defaults
 
-The startup preset follows v9: vmax=0.75 m/s, amax_s=amax_b=15 m/s², jmax=50 m/s³, 20T GT2 pulley and 1/16 microsteps (80,000 steps/m). The capture window is 0.60 rad, with direction, rate, velocity headroom, rail and acceleration-ramp checks. The governor anticipates speed gained during jerk ramp-down. JavaScript equations are checked against the compiled firmware headers.
+The startup preset follows v20: vmax=0.8 m/s, amax_s=amax_b=12 m/s², jmax=60 m/s³, 60T GT2 pulley and 1/16 microsteps (26,666.667 steps/m). The capture window is 0.60 rad, with direction, rate, velocity headroom, rail and acceleration-ramp checks. The governor anticipates speed gained during jerk ramp-down. JavaScript equations are checked against the compiled firmware headers.
 
 - **Current firmware snapshot:** source configuration at the latest bundle build.
 - **Recorded 20T:** parameters from the third automatic trial in `run_20260916_122300`: 0.75/15/15/50, firmware v7. Experiments use the current engine; this is a parameter preset, not exact historical firmware replay.
@@ -46,13 +46,25 @@ Optional browser test: `node simulator175/browser_test.js` with a local server r
 
 The older settling search/assessment files are retained as historical 60T experiments. Do not interpret their old pass counts as evidence for current v8 geometry and control logic.
 
-## v9 rail recovery
+## v10 rail recovery
 
-Normal automatic travel is ±130 mm within the ±150 mm physical rail. At that
-threshold, or earlier when the governor predicts inadequate stopping distance
-to ±135 mm, automatic control pauses for braking and recentering. Recovery
-returns toward center with a 0.15 m/s target and resumes swing-up only after
-100 ms within ±3 mm with speed ≤0.01 m/s and acceleration ≤0.1 m/s². It does
-not reset the position origin. Recovery timeout is 8 s; the hard fault remains
-±140 mm. The simulator records recovery phases and durations. Historical
-recovery comparisons/assessments describe their named engine revisions.
+Normal automatic travel is ±135 mm within the ±150 mm physical rail. At that
+threshold, or earlier when predicted stopping distance requires it, automatic
+control pauses for braking and an inward return. Swing-up resumes once moving
+inward inside ±130 mm, without seeking center or waiting at rest. Recovery
+keeps the position origin. Timeout is 8 s; the hard fault remains ±140 mm.
+The simulator records recovery phases and durations. DDS uses the firmware's
+7 µs tick; its pulse ceiling is approximately 71,429 steps/s.
+Historical comparisons describe their named engine revisions and limits.
+
+## Angular-rate failsafe (v18)
+
+The current engine trips immediately when filtered |θ̇| > 25 rad/s, brakes and
+centers the cart with the existing jerk limit, then resumes swing-up once
+centered/stopped and valid |θ̇| < 10 rad/s. There is no full-turn requirement,
+angle gate, or dwell. Recovery modes are `spin_brake`, `spin_center`, and
+`spin_wait`. Historical validation files retain their named revisions.
+
+## Manual upright trials
+
+Choose **Manual upright · candidate 8** or `?preset=upright`. The balance scenario now represents a manually started upright-only trial: `bal_pw=8`, ±50° fall abort, center, stop, no swing-up restart. Set `bal_pw=7` for the baseline comparison. Simulation initial states bypass the firmware's ±10° start gate so recovery can be stress-tested. See [tuning evidence and instructions](../analysis/upright_tuning.md).

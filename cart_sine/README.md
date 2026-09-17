@@ -76,7 +76,7 @@ and 5 Hz frequency bounds remain in force.
 ## Hardware and tracking
 
 This standalone sketch retains its **60T pulley** calibration. The repository's
-`swingup` sketch uses a separate **20T** calibration; these are not interchangeable.
+`swingup` sketch now also uses **60T** calibration; their wiring and commands still differ.
 
 The current sketch's pin settings are **STEP 18, DIR 19, shared ENABLE 27
 (active LOW)**, 200 full steps/revolution, 1/16 microstepping, 60T GT2 pulley.

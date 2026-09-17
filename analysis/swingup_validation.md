@@ -1,6 +1,61 @@
 # Swing-up controller adjustment — 175 mm / 14.2 g
 
-## Latest revision: swingup-175mm-20t-v9
+## Latest revision: swingup-175mm-60t-v21
+
+Cart STEP25/DIR26; Z1 swapped to STEP18/DIR19; Z2 remains STEP16/DIR17.
+60T geometry and linear limits remain 0.8/12/12/60. Pin/driver harness,
+16 simulator groups and ESP32 compile pass (341619 program bytes,
+22720 global bytes).
+Not uploaded.
+
+## Previous revision: swingup-175mm-60t-v20
+
+60T pulley: 120 mm/rev, 26.666667 steps/mm. Linear limits stay 0.8 m/s,
+12 m/s² swing/balance, 60 m/s³ jerk. Motor equivalents: 400 RPM, 6000 RPM/s,
+30000 RPM/s². Historical captures/presets retain their measured geometry.
+Geometry/motion, actual DDS pulse and driver-disable checks, serial watchdog/CRC,
+both recovery suites and 16 simulator groups pass. Both ESP32 sketches compile.
+Swing-up: 341619 program bytes, 22720 global bytes. Not flashed.
+
+## Previous revision: swingup-175mm-20t-v18
+
+Immediate filtered angular-rate trigger above 25 rad/s in either direction;
+brake and center, then resume below 10 rad/s with valid encoder data and a
+centered/stopped cart. No full turn, angle gate, or quiet dwell required.
+Preserves current upright-only trial changes; its fall-return-stop behavior remains
+separate. C++ recovery tests, four firmware harness tests, 15 simulator groups and
+ESP32 compile pass (341527 program bytes, 22720 global bytes). Not flashed.
+
+## Previous revision: swingup-175mm-20t-v16
+
+Full-turn pendulum overspeed threshold is now **above 200 RPM**, raised from 50
+at user request. A full turn is still required; recovery still centers the cart
+and waits below 30 RPM in the lower half for three continuous seconds. Limits,
+upright reference and serial settings are unchanged. C++ spin recovery checks,
+14 simulator groups and ESP32 compile pass. Not flashed by the assistant.
+
+## Previous revision: swingup-175mm-20t-v15
+
+See [serial integrity and recovery](serial_integrity_v15.md). Firmware and console
+now require matching checksummed replies at 115200 baud. Upright target and
+motion limits unchanged; no physical USB validation yet.
+
+## Previous revision: swingup-175mm-20t-v14
+
+See [measured upright reference](encoder_reference_v14.md). Absolute encoder count
+3416 is theta=0; down-zero does not override it. Limits and balance gains unchanged.
+
+## Previous revision: swingup-175mm-20t-v13
+
+See [serial recovery and encoder calibration](serial_encoder_v13.md). Defaults are
+0.8/12/12/60. Software checks pass; USB hardware cause and sustained balance are
+not established. Flash firmware and restart the matching console at 230400 baud.
+
+## Previous revision: swingup-175mm-20t-v12
+
+See [spin recovery checks](spin_recovery_v12.md). Defaults remain 0.8/16/16/70.
+
+## Previous revision: swingup-175mm-20t-v9
 
 See [ENABLE fix and rail recovery assessment](rail_recovery_v9.md).
 

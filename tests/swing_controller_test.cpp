@@ -1,5 +1,6 @@
 #include "../swingup/swing_controller.h"
 #include "../swingup/rail_recovery.h"
+#include "../swingup/spin_recovery.h"
 #include <cassert>
 #include <cstdio>
 #include <initializer_list>
@@ -14,6 +15,7 @@ Result simulate(float plant_length, float start_angle_offset, float initial_x,
   swing_control::PumpState pump;
   rail_recovery::State recovery;
   swing_control::ResponseWatch response;
+  spin_recovery::State spin;
   float x=initial_x, theta=start_balancing?start_angle_offset:swing_control::kPi+start_angle_offset;
   float omega=0, angle_hat=swing_control::wrap(theta), rate_hat=0;
   response.reset(swing_control::wrap(theta));
@@ -24,7 +26,11 @@ Result simulate(float plant_length, float start_angle_offset, float initial_x,
   for(int i=0;i<40000;++i) {
     const float measured=swing_control::wrap(roundf(theta*4096/(2*swing_control::kPi))*2*swing_control::kPi/4096);
     swing_control::estimate(measured,p.bw,dt,angle_hat,rate_hat);
-    if((mode==2 || mode==3) && recovery.atEdge(x,p.rail)){recovery.begin();mode=5;}
+    const uint32_t now=i*1000;
+    if((mode==2 || mode==3 || mode==5 || mode==6) && spin_recovery::trigger(rate_hat)){
+      spin.begin(now);recovery.reset();response.armed=false;pump.reset();mode=7;
+    }
+    if((mode==2 || mode==3) && recovery.atEdge(x,p.rail)){recovery.begin(x,p.rail,cart.brake_direction);mode=5;}
     float a=0;
     if(mode==2) {
       a=swing_control::swing(p,pump,angle_hat,rate_hat,x,cart.velocity,dt);
@@ -41,13 +47,21 @@ Result simulate(float plant_length, float start_angle_offset, float initial_x,
         mode=2;pump.reset();
         a=swing_control::swing(p,pump,angle_hat,rate_hat,x,cart.velocity,dt);
       }else if(recovery.timedOut()){fault=true;break;}
-      else {mode=recovery.phase==rail_recovery::CENTERING?6:5;
+      else {mode=recovery.phase==rail_recovery::RETURNING?6:5;
         a=recovery.demand(x,cart,p.vmax,fmaxf(p.amax_s,p.amax_b),p.jmax,dt);}
+    }
+    if(mode>=7 && mode<=9){
+      if(spin.update(x,cart,rate_hat,true,now)){
+        mode=2;pump.reset();response.reset(measured);
+        a=swing_control::swing(p,pump,angle_hat,rate_hat,x,cart.velocity,dt);
+      }else if(spin.timedOut(now)){fault=true;break;}
+      else{mode=spin.phase==spin_recovery::BRAKING?7:spin.phase==spin_recovery::CENTERING?8:9;
+        a=spin.demand(x,cart,p.vmax,fmaxf(p.amax_s,p.amax_b),p.jmax,dt);}
     }
     const auto previous=cart;
     cart=cart_motion::advance(cart,x,a,p.vmax,mode==2?p.amax_s:p.amax_b,
                               fmaxf(p.amax_s,p.amax_b),p.jmax,p.rail,dt);
-    if(cart.brake_direction && (mode==2 || mode==3)){recovery.begin();mode=5;}
+    if(cart.brake_direction && (mode==2 || mode==3)){recovery.begin(x,p.rail,cart.brake_direction);mode=5;}
     x+=cart.velocity*dt; // Firmware position is an inferred pulse position.
     assert(fabsf(cart.acceleration-previous.acceleration)<=p.jmax*dt+1e-5f);
     assert(fabsf(cart.acceleration)<=fmaxf(p.amax_s,p.amax_b)+1e-5f);
@@ -99,7 +113,7 @@ int main(int argc,char **argv) {
   assert(!swing_control::canCapture(p,g,0,0,.13f,0));
   // At rest the smoothed pump should have no sign-relay demand from tiny noise.
   swing_control::PumpState pump;
-  rail_recovery::State recovery; pump.elapsed=2;
+  pump.elapsed=2;
   const auto a=swing_control::swing(p,pump,swing_control::kPi,.03f,0,0,.001f);
   assert(fabsf(a)<.13f);
   std::printf("%d/%d closed-loop scenarios passed; response fault and capture/noise checks passed. Ideal motor tracking assumed.\n",passed,total);
