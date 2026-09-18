@@ -9,8 +9,17 @@ paused during these tests.
 
 ## Run the swing-up sketch (125 mm arm, 60T pulley, 300 mm travel)
 
-**v30 pins the user-specified limits and retains adjustable spin recovery for the 125 mm / 11.05 g arm with two 5.85 g end weights.** The 60T pulley and cart STEP25/DIR26 mapping are retained. `params` should report
-`pulley_teeth 60`, `cart_mm_per_rev 120`, and `cart_steps_per_m 26666.67`.
+**v33:** the user-authorized `jmax` ceiling is now **150 m/s³** (75,000 RPM/s²
+on the 60T pulley). The boot default remains 100; use `stop` then `set jmax 150`
+to select the new value. The other motion ceilings remain 1.5 m/s, 25 m/s²,
+and 150 rad/s for spin recovery. `bw` is adjustable from 0.1–100 Hz while stopped;
+its boot default is 50 Hz. Changing bandwidth resets the estimator in the control task.
+
+v32 added a bounded startup kick from centered hanging rest, subject to the same
+jerk and rail protection. Physical tuning results and per-trial settings are in
+`/Users/sajivshah/Documents/InvertedPendulum/autonomous_tuning/20260918_resume/`.
+The 60T pulley, 125 mm arm, and cart STEP25/DIR26 mapping are retained. `params`
+should report `pulley_teeth 60`, `cart_mm_per_rev 120`, and `cart_steps_per_m 26666.67`.
 
 `swingup/swingup.ino` runs on the ESP32; `cartpole.py` is its Mac console.
 The swing-up cart pins are **STEP = GPIO25, DIR = GPIO26**.
@@ -34,10 +43,10 @@ there is **no homing movement**. The sketch boots idle with **all drivers disabl
 | Keyboard jog speed (`vman`) | 0.05 m/s |
 
 The 60T pulley and 2 mm belt pitch give 120 mm/revolution and 26.666667 steps/mm
-at 1/16 microstepping. Automatic jerk is 60 m/s³: acceleration changes by
-at most 0.06 m/s² per 1 ms tick, taking 200 ms from zero to 12 m/s².
-A 7 µs pulse timer supports up to 71,429 steps/s (2.679 m/s pulse ceiling; configured limit remains 0.8 m/s); 0.8 m/s
-requires 21,333 steps/s. DDS scaling uses the same timer period.
+at 1/16 microstepping. At `jmax 150`, acceleration changes by at most
+0.15 m/s² per 1 ms tick, taking approximately 167 ms from zero to 25 m/s².
+A 7 µs pulse timer supports up to 71,429 steps/s (2.679 m/s pulse ceiling);
+the configured 1.5 m/s limit requires 40,000 steps/s.
 Manual jogging keeps its gentler acceleration and jerk limits.
 `stop`, `off`, and faults stop pulses and **disable all three drivers**.
 Startup drives the shared active-low ENABLE pin HIGH before serial delays,
@@ -49,7 +58,7 @@ There are no `fast` or `slow` profiles; motion commands use the current limits.
 
 `vmax_s` and `vmax_b` independently cap swing-up and balance; both are bounded by
 `vmax`. Raising an unused hard ceiling does not change pumping or capture.
-Both operating caps start at 0.8 m/s: reducing the entire swing phase prevented
+Both operating caps start at 1.5 m/s: reducing the entire swing phase prevented
 energy buildup in many modeled cases. The approach to upright has its own slower policy.
 
 On the incoming arc, `approach_angle=0.8` rad (46°) begins blending the energy
@@ -66,22 +75,19 @@ Changes require `stop` first. For example, `set vmax_s 0.8`, `set vmax_b 0.8`,
 [Evidence, validation and remaining limitations](analysis/v26/README.md).
 **v26 uploaded; firmware, defaults, IDLE and disabled output verified over serial. No physical motion trial yet.**
 
-### User-locked motion ceilings (v30)
+### User-set motion ceilings (v33)
 
-**Uploaded and serial-verified on September 18. Motors left disabled.**
+Firmware enforces maximums of `spin_trip_rad_s 150`, `jmax 150`,
+`amax_s 25`, `amax_b 25`, and `vmax`, `vmax_s`, `vmax_b` all 1.5.
+Boot defaults match these except `jmax`, which remains 100. `bw` is independently
+tunable. The trial runner reapplies and verifies its recorded settings before motion.
+Lower values remain manually configurable while stopped.
 
-The September 18 autonomous-tuning limits are fixed: `spin_trip_rad_s 150`,
-`bw 50`, `jmax 100`, `amax_s 25`, `amax_b 25`, and `vmax`, `vmax_s`, `vmax_b`
-all 1.5. These are startup defaults and firmware-enforced upper bounds.
-The tuning runner reapplies and verifies the exact requested values before
-motion. Lower values remain manually configurable while stopped.
-
-Autonomous trials require a healthy encoder magnet, a physically confirmed
-cart center, and supervision. Keep a single serial connection open between
-trials: opening this board's port resets it and its pulse-based position origin.
-A reconnect invalidates the earlier center confirmation. Never use `home` to
-hide unverified physical cart position. Trial data and fixed-limit policy are
-in `/Users/sajivshah/Documents/InvertedPendulum/autonomous_tuning/20260918`.
+Trials require a usable encoder magnet, a known cart origin, and supervision.
+Keep one serial connection open between trials: opening this board's port resets
+its pulse-based position origin. Re-establish the origin after a reset; `home`
+sets the current position to zero and does not physically seek the center.
+Cart position is inferred from pulses and cannot detect all missed steps.
 
 ### Adjustable spin recovery (introduced in v29)
 
@@ -225,10 +231,36 @@ driver enable, so support the height assembly. From Terminal:
 
 ```bash
 cd /Users/sajivshah/Documents/GitHub/cartpole_inverted_pendulum
-arduino-cli compile --fqbn esp32:esp32:esp32 swingup
-arduino-cli upload --fqbn esp32:esp32:esp32 -p /dev/cu.usbserial-0001 swingup
+python3 flash.py swingup
 python3 cartpole.py --port /dev/cu.usbserial-0001
 ```
+
+### Compile and flash any sketch
+
+`flash.py` requires Python 3, `arduino-cli`, and the installed board core (see
+setup below). It defaults to `swingup` and the `esp32:esp32:esp32` board. It
+selects the single connected USB serial device; with multiple devices, specify
+`--port`. Close the serial console or plotter first.
+
+```bash
+python3 flash.py                          # compile + flash swingup
+python3 flash.py frequency_test           # any sketch in this repo
+python3 flash.py characterize/characterize.ino
+python3 flash.py swingup --port /dev/cu.usbserial-0001
+python3 flash.py swingup --compile-only   # compile without accessing hardware
+python3 flash.py /path/to/sketch --fqbn vendor:architecture:board --port PORT
+```
+
+You can invoke the script by its full path from any directory. Sketch names
+resolve from the current directory first, then from this repo. Paths containing
+spaces must be quoted. Use `--libraries DIR` for extra libraries or `--cli PATH`
+for an Arduino CLI installation outside your PATH. The bundled FastAccelStepper
+library is included automatically. `python3 flash.py --help` lists all options.
+
+Every invocation builds in a fresh temporary directory and uploads that exact
+build only if compilation succeeds. Temporary files are removed afterward.
+The script does not open a serial monitor or send motion commands; the selected
+firmware determines startup behavior after upload.
 
 If Python dependencies are missing, install `pyserial` and `matplotlib` in your
 Python environment. The port may change after reconnecting; check `/dev/cu.*`.

@@ -66,7 +66,8 @@ inline void estimate(float measured, float bandwidth, float dt, float &angle, fl
 }
 struct PumpState {
   float elapsed = 0, quiet = 0;
-  void reset() { elapsed = quiet = 0; }
+  bool startup_kick = false;
+  void reset() { elapsed = quiet = 0; startup_kick = false; }
 };
 // Changing an unused hard ceiling cannot change the requested motion.
 inline float speedLimit(const Parameters &p, bool balancing) {
@@ -94,6 +95,10 @@ inline float approach(const Parameters &p, float theta, float omega, float x,
 inline float swing(const Parameters &p, PumpState &s, float theta, float omega,
                    float x, float v, float dt, float acceleration=0,
                    const Gains *feedback=nullptr) {
+  // Latch only at a centered, near-rest hanging start. The directly calibrated
+  // upright can leave a modest hanging-angle error; do not wait for sensor noise.
+  if(s.elapsed==0) s.startup_kick=fabsf(wrap(theta-kPi))<0.30f &&
+      fabsf(omega)<0.5f && fabsf(x)<0.05f;
   s.elapsed += dt;
   // Continuous phase feedback replaces the noisy sign relay. Small sensor
   // motion now produces a small demand, not a full +/- energy-pump reversal.
@@ -101,10 +106,12 @@ inline float swing(const Parameters &p, PumpState &s, float theta, float omega,
   float a = p.ke*(energy(theta, omega, p.leff)-1)*phase-p.kpx*x-p.kdx*v;
   if (fabsf(omega)<0.15f && fabsf(wrap(theta-kPi))<0.08f) s.quiet += dt;
   else s.quiet = 0;
-  // Gentle startup bias only in the first 1.5 s, away from the rail ends.
-  // No repeated full-acceleration kicks when the motor fails to follow.
-  if (s.quiet>0.30f && s.elapsed<1.50f && fabsf(x)<0.10f)
-    a = fminf(1.0f, p.amax_s);
+  // One 120 ms, 1 m/s^2 request, still subject to the common jerk/rail governor.
+  // Never rearm while pumping or on an edge-recovery handoff. Abort the kick if
+  // the arm leaves the hanging window or is already moving appreciably.
+  if(s.startup_kick && s.elapsed<=0.120f && fabsf(omega)<1.5f &&
+     fabsf(wrap(theta-kPi))<0.40f && fabsf(x)<0.05f)
+    a=fminf(1.0f,p.amax_s);
   return approach(p,theta,omega,x,v,acceleration,cart_motion::clamp(a,-p.amax_s,p.amax_s),dt,feedback);
 }
 inline bool canCapture(const Parameters &p, const Gains &k, float theta,

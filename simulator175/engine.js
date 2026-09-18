@@ -165,7 +165,7 @@ function simulate(input={},recorded=null){
   let mode=p.scenario==='balance'?'balance':p.scenario==='swing'?'swing':p.scenario;
   const recovery=new RailRecovery(),spin=new SpinRecovery();
   const uprightOnly=p.scenario==='balance',uprightReturn=new SpinRecovery();
-  let quiet=0,elapsed=0,watchElapsed=0,watch=true,watchAngle=q,excursion=0,travel=0,stable=0,longest=0,firstCatch=null;
+  let startupKick=false,quiet=0,elapsed=0,watchElapsed=0,watch=true,watchAngle=q,excursion=0,travel=0,stable=0,longest=0,firstCatch=null;
   let vTarget=0,xTarget=x,held=0,ri=0,previousA=p.initialA,delayed=[];
   const period=Math.max(1,Math.round(p.commandMs)),sensorPeriod=Math.max(1,Math.round(p.encoderMs)),delay=Math.round(p.delayMs);
   const summary={status:'complete',fault:null,peakX:Math.abs(x),peakPulseX:Math.abs(x),peakV:0,peakA:0,peakJ:0,
@@ -192,11 +192,12 @@ function simulate(input={},recorded=null){
     }
     let request=0;
     if(mode==='swing'){
+      if(elapsed===0)startupKick=Math.abs(wrap(hat-PI))<.30&&Math.abs(rate)<.5&&Math.abs(pulseX)<.05;
       elapsed+=dt;
       const en=.5*p.controllerLength/G*rate*rate+Math.cos(hat);
       request=p.ke*(en-1)*Math.tanh(rate*Math.cos(hat)/p.phase_soft)-p.kpx*pulseX-p.kdx*s.v;
       quiet=Math.abs(rate)<.15 && Math.abs(wrap(hat-PI))<.08?quiet+dt:0;
-      if(quiet>.30 && elapsed<1.5 && Math.abs(pulseX)<.1)request=Math.min(1,p.amax_s);
+      if(startupKick&&elapsed<=.120&&Math.abs(rate)<1.5&&Math.abs(wrap(hat-PI))<.40&&Math.abs(pulseX)<.05)request=Math.min(1,p.amax_s);
       request=clamp(request,-p.amax_s,p.amax_s);
       if(canCapture(p,hat,rate,pulseX,s.v,s.a)){
         mode='balance';request=clamp(balance,-p.amax_b,p.amax_b);watch=false;summary.catches++;if(firstCatch===null)firstCatch=t;events.push({t,event:'caught'});
@@ -211,7 +212,7 @@ function simulate(input={},recorded=null){
       else{mode=uprightReturn.phase===1?'bal_brake':'bal_center';request=uprightReturn.demand(pulseX,s,p.vmax,Math.max(p.amax_s,p.amax_b),p.jmax,dt);}
     }else if(mode==='rail_brake'||mode==='rail_return'){
       if(recovery.update(pulseX,s,dt)){
-        mode='swing';quiet=0;elapsed=dt;
+        mode='swing';startupKick=false;quiet=0;elapsed=dt;
         const en=.5*p.controllerLength/G*rate*rate+Math.cos(hat);
         request=clamp(p.ke*(en-1)*Math.tanh(rate*Math.cos(hat)/p.phase_soft)-p.kpx*pulseX-p.kdx*s.v,-p.amax_s,p.amax_s);
         events.push({t,event:'return inside complete',x:pulseX,v:s.v,a:s.a});
@@ -219,7 +220,7 @@ function simulate(input={},recorded=null){
       else {mode=recovery.phase===2?'rail_return':'rail_brake';request=recovery.demand(pulseX,s,p.vmax,Math.max(p.amax_s,p.amax_b),p.jmax,dt);}
     }else if(['spin_brake','spin_center','spin_wait'].includes(mode)){
       if(spin.update(pulseX,s,rate,true,spinNow,p.spin_resume_rad_s)){
-        mode='swing';quiet=0;elapsed=dt;
+        mode='swing';startupKick=false;quiet=0;elapsed=dt;
         watch=true;watchAngle=sensed;excursion=0;travel=0;watchElapsed=0;
         const en=.5*p.controllerLength/G*rate*rate+Math.cos(hat);
         request=clamp(p.ke*(en-1)*Math.tanh(rate*Math.cos(hat)/p.phase_soft)-p.kpx*pulseX-p.kdx*s.v,-p.amax_s,p.amax_s);

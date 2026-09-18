@@ -850,7 +850,7 @@ static uint16_t tele_hz = 25;
 
 void printParams() {
   for (int i=0;i<N_PARAMS;i++) checkedPrintf("= %s %.5f\n", PARAMS[i].name, *PARAMS[i].ptr);
-  checkedPrintln(F("# firmware swingup-125mm-60t-v30"));
+  checkedPrintln(F("# firmware swingup-125mm-60t-v33"));
   checkedPrintf("# pins cart STEP=%d DIR=%d; Z1 STEP=%d DIR=%d; Z2 STEP=%d DIR=%d\n",
                 PIN_CART_STEP, PIN_CART_DIR, PIN_Z1_STEP, PIN_Z1_DIR, PIN_Z2_STEP, PIN_Z2_DIR);
   checkedPrintf("= cart_steps_per_m %.2f\n", CART_STEPS_PER_M);
@@ -989,9 +989,9 @@ void handleLine(char *line) {
           ptr==&controller.spin_resume_rad_s?want:controller.spin_resume_rad_s)){
         checkedPrintln(F("! spin limits require 0 < spin_resume_rad_s < spin_trip_rad_s"));return;
       }
-      // User-locked tuning ceilings (2026-09-18); retain lower-value tuning.
+      // User-locked motion ceilings (2026-09-18); bw is independently tunable 0.1..100 Hz.
       const float user_max=ptr==&controller.spin_trip_rad_s?150.0f:
-          ptr==&p_bw?50.0f:ptr==&p_jmax?100.0f:
+          ptr==&p_jmax?150.0f:
           (ptr==&p_amax_s || ptr==&p_amax_b)?25.0f:
           (ptr==&p_vmax || ptr==&p_vmax_s || ptr==&p_vmax_b)?1.5f:INFINITY;
       if(want>user_max){
@@ -1058,7 +1058,7 @@ void setup() {
   Serial.setTxBufferSize(4096);
   Serial.begin(115200);
   delay(300);
-  checkedPrintln(F("# ESP32 cart-pole swingup-125mm-60t-v30"));
+  checkedPrintln(F("# ESP32 cart-pole swingup-125mm-60t-v33"));
 
   // I2C comes up FIRST, while nothing else is competing for the CPU. Bringing
   // the 125 kHz step interrupt up first meant the very first bus transactions

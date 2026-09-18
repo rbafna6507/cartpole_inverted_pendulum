@@ -57,7 +57,7 @@ issue("set vmax_s 1.5");issue("set vmax_s 2");assert(p_vmax_s==1.5f);
 issue("set vmax_b 1.5");issue("set vmax_b 2");assert(p_vmax_b==1.5f);
 issue("set amax_s 25");issue("set amax_s 26");assert(p_amax_s==25);
 issue("set amax_b 25");issue("set amax_b 26");assert(p_amax_b==25);
-issue("set jmax 100");issue("set jmax 101");assert(p_jmax==100);
+issue("set jmax 100");assert(p_jmax==100);issue("set jmax 150");issue("set jmax 151");assert(p_jmax==150);
 issue("set spin_trip_rad_s 151");assert(controller.spin_trip_rad_s==150);
 issue("set spin_trip_rad_s 60");assert(controller.spin_trip_rad_s==60);
 issue("set spin_resume_rad_s 20");assert(controller.spin_resume_rad_s==20);
@@ -72,7 +72,8 @@ mode=3;issue("set bw 30");assert(p_bw==50 && !req_estimator_reset);
 mode=M_IDLE;th_hat=-1;thd_hat=4128061.5f;
 issue("set bw 30");assert(req_estimator_reset && thd_hat>4000000);
 estimate(.0828f);assert(!req_estimator_reset && std::fabs(th_hat-.0828f)<1e-6f && std::fabs(thd)<.0001f);
-issue("set bw 100");assert(p_bw==30 && !req_estimator_reset);
+issue("set bw 100");assert(p_bw==100 && req_estimator_reset);
+estimate(.09f);assert(!req_estimator_reset && std::fabs(thd)<.0001f);
 issue("set bw 50");assert(p_bw==50 && req_estimator_reset);
 estimate(.1f);assert(std::fabs(thd)<.0001f);
 }
