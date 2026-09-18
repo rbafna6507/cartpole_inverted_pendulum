@@ -10,6 +10,7 @@ window.PENDULUM_PRESETS = {
       "amax_b": 5,
       "jmax": 25,
       "vmax": 0.55,
+      "physicalLength": 0.175,
       "leff": 0.165775567724757,
       "controllerLength": 0.166,
       "damping": 0.4022789826050984,
@@ -54,6 +55,7 @@ window.PENDULUM_PRESETS = {
       "amax_b": 16,
       "jmax": 70,
       "vmax": 0.8,
+      "physicalLength": 0.175,
       "leff": 0.165775567724757,
       "controllerLength": 0.166,
       "damping": 0.4022789826050984,
@@ -101,6 +103,7 @@ window.PENDULUM_PRESETS = {
       "amax_b": 16,
       "jmax": 70,
       "vmax": 0.8,
+      "physicalLength": 0.175,
       "leff": 0.165775567724757,
       "controllerLength": 0.166,
       "damping": 0.4022789826050984,
@@ -141,3 +144,14 @@ window.PENDULUM_PRESETS = {
 };
 
 window.PENDULUM_PRESETS.upright = {name:"Manual upright · candidate 8", parameters:{...window.PendulumSim.defaults,scenario:"balance",initialAngle:5,duration:20},note:"Upright-only; bal_pw 8 versus baseline 7. Same 0.8 / 12 / 12 / 60 limits. Simulation candidate, hardware trial pending."};
+
+// Acknowledged firmware settings, not the rejected formatted paste.
+for(const [i,tr] of window.PENDULUM_DATA.latest_run.trials.entries()){
+  window.PENDULUM_PRESETS['sep18-'+(i+1)]={name:tr.name+' · recorded settings',parameters:{...window.PendulumSim.defaults,...tr.params,
+    leff:window.PendulumSim.defaults.leff,controllerLength:tr.params.leff,duration:Math.min(120,tr.summary.duration_s),initialAngle:tr.initialAngle,initialX:tr.initialX,initialOmega:tr.initialOmega},
+    note:`Acknowledged settings from Sep 18. Hardware: ${tr.summary.balance_entries} captures, longest ${tr.summary.longest_balance_s.toFixed(3)} s; ${(100*tr.summary.rail_fraction).toFixed(1)}% rail recovery. Simulation is a comparison, not measured cart tracking.`};
+}
+
+const sep18Candidate=window.PENDULUM_DATA.gain_assessment.results[0];
+window.PENDULUM_PRESETS['sep18-candidate']={name:'Archived v25 · Sep 18 candidate gains',parameters:{...window.PendulumSim.defaults,...sep18Candidate.p,duration:60},note:'Historical v25 gains. The 11/18 result applied to the archived engine, not this v26 controller. Full 300 mm rail; start physically centered. Encoder offset and tracking errors still cause failures.'};
+window.PENDULUM_PRESETS['sep18-recent-plant']={name:'v26 · recent plant estimate',parameters:{...window.PENDULUM_PRESETS['sep18-candidate'].parameters,...window.PENDULUM_DATA.gain_assessment.recent_plant},note:'Current v26 control with provisional stopped-motion dynamics: about 119 mm effective length and 0.42/s damping. Held-out angle error is still about 7°. This does not change the 124 mm controller length or firmware calibration.'};

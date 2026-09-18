@@ -56,7 +56,8 @@
 //      off / on        de-energize / energize
 //      home            call this x = 0
 //      zhome           call this z = 0
-//      zero            re-zero encoder (pendulum hanging, still)
+//      zero            save down and opposite upright (hanging, still)
+//      upright [count] save current upright or explicit raw count; persists
 //      rate <hz>       telemetry rate, 0 = off
 //      set <k> <v>     live-tune a parameter
 //      get <k> / params / stat / help
@@ -64,6 +65,7 @@
 
 #include <Arduino.h>
 #include <Wire.h>
+#include <Preferences.h>
 #include "driver/gpio.h"
 #include "cart_motion.h"
 #include "rail_recovery.h"
@@ -146,9 +148,8 @@ static const float VMAX_CEIL = cart_hardware::max_speed;
 
 // ===================== LIVE-TUNABLE PARAMETERS ==============================
 // Change any of these at runtime with  set <name> <value>  - no reflash.
-// Current 175 mm / 14.2 g configuration: L_eff=0.166 m from 33
-// low-angle cycles in three captures. See analysis/fit_175mm.py.
-// Shared defaults and equations keep firmware and simulation in agreement.
+// Current arm: 125 mm / 11.05 g plus two 5.85 g end weights.
+// L_eff=0.124 m from 20 low-angle cycles in the pre-175 mm captures.
 swing_control::Parameters controller;
 float &p_leff = controller.leff;
 float &p_pw = controller.pw;
@@ -156,6 +157,8 @@ float &p_pz = controller.pz;
 float &p_pc1 = controller.pc1;
 float &p_pc2 = controller.pc2;
 float &p_vmax = controller.vmax;
+float &p_vmax_s = controller.vmax_s;
+float &p_vmax_b = controller.vmax_b;
 float &p_amax_s = controller.amax_s;
 float &p_amax_b = controller.amax_b;
 float &p_jmax = controller.jmax;
@@ -180,9 +183,14 @@ float K1, K2, K3, K4;
 
 struct Param { const char *name; float *ptr; bool recalc; };
 static const Param PARAMS[] = {
+  {"spin_trip_rad_s",&controller.spin_trip_rad_s,false},
+  {"spin_resume_rad_s",&controller.spin_resume_rad_s,false},
   {"bal_pw",&controller.bal_pw,false},
   {"leff",&p_leff,true},   {"pw",&p_pw,true},      {"pz",&p_pz,true},
   {"pc1",&p_pc1,true},     {"pc2",&p_pc2,true},
+  {"vmax_s",&p_vmax_s,false},{"vmax_b",&p_vmax_b,false},
+  {"approach_v",&controller.approach_v,false},{"catch_v",&controller.catch_v,false},
+  {"approach_angle",&controller.approach_angle,false},{"catch_da",&controller.catch_da,false},
   {"vmax",&p_vmax,false},  {"amax_s",&p_amax_s,false},{"amax_b",&p_amax_b,false},
   {"amax_m",&p_amax_m,false},{"jmax_m",&p_jmax_m,false},
   {"phase_soft",&p_phase_soft,false},{"jmax",&p_jmax,false},  {"ke",&p_ke,false},      {"kpx",&p_kpx,false},   {"kdx",&p_kdx,false},
@@ -287,6 +295,15 @@ void energize(bool on) {
 #define ENC_CPR       4096
 
 static int32_t enc_last_raw = 0, enc_ticks = 0, enc_zero = 0;
+volatile int32_t enc_upright_raw = encoder_reference::upright_raw;
+volatile bool reference_saved = false;
+void loadEncoderReference() {
+  Preferences storage;
+  if(storage.begin("cartpole",true)){
+    const uint16_t raw=storage.getUShort("upright",65535);storage.end();
+    if(raw<ENC_CPR){enc_upright_raw=raw;reference_saved=true;}
+  }
+}
 volatile uint8_t enc_agc = 0;
 volatile uint8_t enc_status = 0;
 volatile uint32_t enc_errors = 0;
@@ -389,9 +406,8 @@ inline float wrapPi(float a) {
 
 // theta: 0 = upright, +-pi = hanging, positive = pole top leaning toward +x
 float encTheta() {
-  // BALANCE, capture gating, observer and telemetry all use the measured upright.
-  // A startup/manual down-zero never changes this absolute reference.
-  return encoder_reference::angle_from_upright(enc_last_raw, ENC_INVERT != 0);
+  // One live reference for the observer, capture gate, balance and telemetry.
+  return encoder_reference::angle_from_upright(enc_last_raw, ENC_INVERT != 0, enc_upright_raw);
 }
 
 // Magnet diagnostics. The reviews on these modules are full of people who got
@@ -420,24 +436,6 @@ void encPrintMagnet() {
                 (unsigned long)enc_errors, (unsigned long)enc_recoveries);
 }
 
-// Blocking version - setup() only, before the control task exists.
-void encZeroBlocking() {
-  checkedPrintln(F("# zeroing: hold the pendulum still, hanging down..."));
-  int stable = 0; int32_t prev = enc_ticks; uint32_t t0 = millis();
-  while (stable < 400 && millis() - t0 < 15000) {
-    encUpdate();
-    if (labs(enc_ticks - prev) <= 2) stable++; else stable = 0;
-    prev = enc_ticks;
-    delay(2);
-  }
-  if (stable >= 400) {
-    enc_zero = enc_ticks;
-    checkedPrintf("# down reference recorded; fixed upright 3416 counts, theta = %.3f rad\n", encTheta());
-  } else {
-    checkedPrintln(F("! encoder zero FAILED: pendulum never became still"));
-  }
-}
-
 // ========================== CONTROLLER ======================================
 enum Mode { M_IDLE=0, M_MANUAL, M_SWINGUP, M_BALANCE, M_FAULT, M_RAIL_BRAKE, M_RAIL_RETURN, M_SPIN_BRAKE, M_SPIN_CENTER, M_SPIN_WAIT, M_BAL_BRAKE, M_BAL_CENTER };
 volatile Mode mode = M_IDLE;
@@ -447,6 +445,7 @@ volatile float th=0, thd=0, xc=0, vc=0, acc_cmd=0, energy_n=-1;
 volatile float z_mm=0;
 volatile uint32_t loop_us=0;
 static float th_hat=0, thd_hat=0;
+volatile bool req_estimator_reset=false;
 static swing_control::PumpState pump;
 static swing_control::ResponseWatch response_watch;
 static int32_t home_steps=0, zhome_steps=0;
@@ -454,7 +453,11 @@ static int32_t home_steps=0, zhome_steps=0;
 // Cross-context requests. loop() may only SET these; the control task is the
 // only thing allowed to act on them, because it is the sole owner of the I2C
 // bus once it exists. This is the whole fix for 'mag' returning nothing.
-volatile bool req_diag = false, req_zero = false, req_encoder = false;
+volatile bool req_diag = false, req_encoder = false;
+// 0 none, 1 hanging capture, 2 upright capture, 3 explicit upright count.
+volatile int calibration_request=0;
+volatile int32_t requested_upright_raw=0;
+volatile bool reference_save_pending=false;
 constexpr uint32_t HOST_TIMEOUT_MS=1500;
 volatile uint32_t last_host_command_ms=0;
 struct ControlMessage {char text[160];};
@@ -468,11 +471,38 @@ void flushControlMessages(){
   ControlMessage message;
   while(control_messages && xQueueReceive(control_messages,&message,0)==pdTRUE)checkedPrintln(message.text);
 }
-volatile bool diag_done = false, zero_done = false;
-static bool zeroing = false;
-static int  zero_stable = 0;
-static int32_t zero_prev = 0;
-static uint32_t zero_t0 = 0;
+volatile bool diag_done = false;
+static volatile bool zeroing = false;
+static bool capture_upright=false;
+static encoder_reference::StillCapture reference_capture;
+static uint32_t zero_t0=0;
+bool encoderCalibrationBusy(){return calibration_request!=0 || zeroing || reference_save_pending;}
+void cancelEncoderCalibration(){calibration_request=0;zeroing=false;}
+void applyEncoderReference(int32_t raw){
+  // The pending request or zeroing flag keeps motion blocked during this update.
+  reference_saved=false;
+  enc_upright_raw=encoder_reference::normalize(raw);
+  enc_zero=enc_ticks+encoder_reference::difference(encoder_reference::opposite(enc_upright_raw),enc_last_raw);
+  th=th_hat=encTheta();thd=thd_hat=0;energy_n=cosf(th);
+  pump.reset();response_watch.armed=false;
+  char message[120];snprintf(message,sizeof(message),"# upright reference applied: %ld counts, theta=%.2fdeg; saving",(long)enc_upright_raw,th*180/M_PI);
+  controlLog(message);
+  reference_save_pending=true; // Publish only after the complete reference is ready.
+}
+// Non-real-time persistence. All motion commands remain blocked until finished.
+void saveEncoderReference(){
+  if(!reference_save_pending)return;
+  Preferences storage;bool ok=false;
+  if(storage.begin("cartpole",false)){
+    ok=storage.putUShort("upright",(uint16_t)enc_upright_raw)==sizeof(uint16_t);storage.end();
+  }
+  reference_saved=ok;
+  checkedPrintf("= encoder_upright_raw %ld\n",(long)enc_upright_raw);
+  checkedPrintf("= encoder_reference_saved %d\n",(int)ok);
+  checkedPrintln(ok?F("# encoder reference saved; drivers disabled. Ready for a new motion command."):
+                    F("! encoder reference active but SAVE FAILED; it will not survive reset"));
+  reference_save_pending=false;
+}
 
 static float v_manual=0;
 static uint32_t v_manual_deadline=0;
@@ -500,6 +530,10 @@ void computeGains() {
 // would give ~1.5 rad/s of quantisation hash; this smooths it and handles the
 // +-pi wrap without a glitch.
 void estimate(float theta_meas) {
+  if(req_estimator_reset){
+    swing_control::resetEstimate(theta_meas,th_hat,thd_hat);
+    req_estimator_reset=false;
+  }
   swing_control::estimate(theta_meas, p_bw, DT, th_hat, thd_hat);
   th = theta_meas;  // telemetry retains the raw encoder angle
   thd = thd_hat;
@@ -514,11 +548,13 @@ float balanceAccel() {
 }
 float swingAccel() {
   energy_n = swing_control::energy(th_hat, thd, p_leff);
-  return swing_control::swing(controller, pump, th_hat, thd, xc, vc, DT);
+  const auto feedback=currentGains();
+  return swing_control::swing(controller, pump, th_hat, thd, xc, vc, DT, acc_cmd, &feedback);
 }
 
 void eStop() {
   energize(false); // Disable immediately; ISR also suppresses pulses/counts.
+  cancelEncoderCalibration();
   mode = M_IDLE;
   req_balance=false; upright_only=false; upright_return.reset();
   cart_brake_direction = 0;
@@ -554,7 +590,8 @@ void beginSpinRecovery() {
   response_watch.armed=false; pump.reset();
   v_manual=0; zv_target=0;
   mode=M_SPIN_BRAKE;
-  controlLog("# pendulum |theta_dot| >25 rad/s -> SPIN_BRAKE; center and wait below 10 rad/s");
+  char message[150];snprintf(message,sizeof(message),"# pendulum |theta_dot| >%.2f rad/s -> SPIN_BRAKE; center and wait below %.2f rad/s",controller.spin_trip_rad_s,controller.spin_resume_rad_s);
+  controlLog(message);
 }
 
 void controlTask(void *) {
@@ -587,19 +624,26 @@ void controlTask(void *) {
 
     // Serve bus requests here, where we already own Wire.
     if (req_diag) { req_diag = false; encDiagRead(); diag_done = true; }
-    if (req_zero) {
-      req_zero = false; zeroing = true;
-      zero_stable = 0; zero_prev = enc_ticks; zero_t0 = millis();
+    if(calibration_request){
+      const int request=calibration_request;
+      if(mode!=M_IDLE || g_energized){
+        calibration_request=0;controlLog("! encoder reference rejected: stop first");
+      }else if(request==3){
+        if(enc_ok && enc_consec_err==0)applyEncoderReference(requested_upright_raw);
+        else controlLog("! encoder reference rejected: no fresh encoder reading");
+        calibration_request=0;
+      }else{
+        zeroing=true;capture_upright=request==2;reference_capture.reset();zero_t0=millis();
+        calibration_request=0;
+      }
     }
-    if (zeroing) {
-      if (labs(enc_ticks - zero_prev) <= 2) zero_stable++; else zero_stable = 0;
-      zero_prev = enc_ticks;
-      if (zero_stable >= 400) {
-        enc_zero = enc_ticks; th_hat = encTheta(); thd_hat = 0;
-        zeroing = false; zero_done = true;
-      } else if (millis() - zero_t0 > 15000) {
-        zeroing = false;
-        controlLog("! encoder zero FAILED: pendulum never became still");
+    if(zeroing){
+      if(reference_capture.add(enc_last_raw,enc_ok && enc_consec_err==0)){
+        const int32_t raw=reference_capture.mean();
+        applyEncoderReference(capture_upright?raw:encoder_reference::opposite(raw));
+        zeroing=false;
+      }else if(millis()-zero_t0>5000){
+        zeroing=false;controlLog("! calibration FAILED: need 0.4s still with fresh encoder readings; retry upright or zero");
       }
     }
 
@@ -617,8 +661,9 @@ void controlTask(void *) {
     // Rejection never arms a future automatic capture.
     if(req_balance){
       req_balance=false;
-      if(mode!=M_IDLE || zeroing || !upright_session::canStart(th,th_hat,thd,xc,vc,acc_cmd,enc_ok && enc_consec_err==0)){
-        controlLog("! bal rejected: stop, cart within 30mm of center, pole within 10deg upright and rate <=1rad/s; retry bal when ready");
+      if(mode!=M_IDLE || encoderCalibrationBusy() || !upright_session::canStart(th,th_hat,thd,xc,vc,acc_cmd,enc_ok && enc_consec_err==0)){
+        char reason[160];snprintf(reason,sizeof(reason),"! bal rejected: angle=%.2fdeg estimate=%.2fdeg rate=%.2f x=%.1fmm; need +/-10deg, rate<=1, x<=30mm, stopped + healthy",th*180/M_PI,th_hat*180/M_PI,thd,xc*1000);
+        controlLog(reason);
       }else{
         upright_only=true; energize(true); mode=M_BALANCE;
         controlLog("# BALANCE");
@@ -630,7 +675,7 @@ void controlTask(void *) {
 
     const bool automatic=mode==M_SWINGUP || mode==M_BALANCE ||
         ((mode==M_RAIL_BRAKE || mode==M_RAIL_RETURN) && !recovery_was_manual);
-    if(!upright_only && automatic && enc_ok && spin_recovery::trigger(thd))beginSpinRecovery();
+    if(!upright_only && automatic && enc_ok && spin_recovery::trigger(thd,controller.spin_trip_rad_s))beginSpinRecovery();
 
     if ((mode==M_MANUAL || mode==M_SWINGUP || mode==M_BALANCE) &&
         rail_recovery_state.atEdge(xc,p_rail)) beginRailRecovery();
@@ -670,6 +715,8 @@ void controlTask(void *) {
         const float recovery_amax=recovery_was_manual?p_amax_m:max(p_amax_s,p_amax_b);
         const float recovery_jerk=recovery_was_manual?p_jmax_m:p_jmax;
         if(rail_recovery_state.update(xc,current,DT)) {
+          char handoff[96];snprintf(handoff,sizeof(handoff),"# rail handoff x=%.5f v=%.4f a=%.3f",xc,vc,acc_cmd);
+          controlLog(handoff);
           if(recovery_was_manual) {
             recovery_was_manual=false; mode=M_MANUAL;
             v_manual=0; v_manual_deadline=millis();
@@ -687,7 +734,7 @@ void controlTask(void *) {
           goto zaxis;
         } else {
           if(mode==M_RAIL_BRAKE && rail_recovery_state.phase==rail_recovery::RETURNING) {
-            mode=M_RAIL_RETURN; controlLog("# rail stopped -> RETURN_INSIDE");
+            mode=M_RAIL_RETURN; controlLog("# rail speed and acceleration settled -> RETURN_INSIDE");
           }
           a=rail_recovery_state.demand(xc,current,p_vmax,recovery_amax,recovery_jerk,DT);
         }
@@ -719,10 +766,11 @@ void controlTask(void *) {
         current.velocity=vc;current.acceleration=acc_cmd;current.brake_direction=cart_brake_direction;
         const uint32_t now=micros();
         const auto previous=spin_recovery_state.phase;
-        if(spin_recovery_state.update(xc,current,thd,enc_ok,now)) {
+        if(spin_recovery_state.update(xc,current,thd,enc_ok,now,controller.spin_resume_rad_s)) {
           pump.reset();response_watch.reset(th);mode=M_SWINGUP;
           a=swingAccel();
-          controlLog("# centered and |theta_dot| <10 rad/s -> SWINGUP");
+          char message[100];snprintf(message,sizeof(message),"# centered and |theta_dot| <%.2f rad/s -> SWINGUP",controller.spin_resume_rad_s);
+          controlLog(message);
         } else if(spin_recovery_state.timedOut(now)) {
           eStop();mode=M_FAULT;
           controlLog("! spin recovery centering timeout -> FAULT");
@@ -754,7 +802,13 @@ void controlTask(void *) {
                                 (mode == M_SWINGUP ? p_amax_s : p_amax_b));
       const float brake_amax = use_manual_limits ? p_amax_m : max(p_amax_s, p_amax_b);
       const float jerk = use_manual_limits ? p_jmax_m : p_jmax;
-      motion = cart_motion::advance(motion, xc, a, p_vmax, drive_amax,
+      const float mode_speed=use_manual_limits?p_vmax:
+          mode==M_SWINGUP?swing_control::speedLimit(controller,false):
+          mode==M_BALANCE?swing_control::speedLimit(controller,true):
+          swing_control::recoverySpeedLimit(controller);
+      // A lower mode cap is approached through jerk limiting; only the hard
+      // ceiling below is a fault. Never clip velocity on a mode transition.
+      motion = cart_motion::advance(motion, xc, a, mode_speed, drive_amax,
                                     brake_amax, jerk, p_rail, DT);
       vc = motion.velocity;
       acc_cmd = motion.acceleration;
@@ -796,7 +850,7 @@ static uint16_t tele_hz = 25;
 
 void printParams() {
   for (int i=0;i<N_PARAMS;i++) checkedPrintf("= %s %.5f\n", PARAMS[i].name, *PARAMS[i].ptr);
-  checkedPrintln(F("# firmware swingup-175mm-60t-v21"));
+  checkedPrintln(F("# firmware swingup-125mm-60t-v30"));
   checkedPrintf("# pins cart STEP=%d DIR=%d; Z1 STEP=%d DIR=%d; Z2 STEP=%d DIR=%d\n",
                 PIN_CART_STEP, PIN_CART_DIR, PIN_Z1_STEP, PIN_Z1_DIR, PIN_Z2_STEP, PIN_Z2_DIR);
   checkedPrintf("= cart_steps_per_m %.2f\n", CART_STEPS_PER_M);
@@ -806,13 +860,14 @@ void printParams() {
   checkedPrintf("= vmax_ceiling %.5f\n", VMAX_CEIL);
   checkedPrintf("= rpm_ceiling %.3f\n", cart_hardware::max_rpm);
   checkedPrintf("= host_timeout_ms %lu\n",(unsigned long)HOST_TIMEOUT_MS);
+  checkedPrintln(F("# vmax is the hard ceiling; vmax_s/vmax_b select swing/balance limits. Capture speed is catch_v."));
   checkedPrintln(F("= encoder_snapshot 1"));
   checkedPrintln(F("= serial_crc16 1"));
   checkedPrintf("= cart_invert %d\n",CART_INVERT);
   checkedPrintf("= encoder_invert %d\n",ENC_INVERT);
-  checkedPrintf("= encoder_upright_raw %d\n",encoder_reference::upright_raw);
-  checkedPrintf("= spin_trip_rad_s %.1f\n",spin_recovery::trip_rad_s);
-  checkedPrintf("= spin_resume_rad_s %.1f\n",spin_recovery::resume_rad_s);
+  checkedPrintf("= encoder_upright_raw %ld\n",(long)enc_upright_raw);
+  checkedPrintf("= encoder_reference_saved %d\n",(int)reference_saved);
+  checkedPrintln(F("= encoder_reference_mutable 1"));
   checkedPrintln(F("= bal_fall_deg 50"));
   checkedPrintln(F("= bal_start_deg 10"));
   const auto bk=swing_control::uprightGains(controller);
@@ -827,6 +882,11 @@ void handleLine(char *line) {
   if (!cmd) return;
   last_host_command_ms=millis();
   char *a1 = strtok(nullptr, " \t");
+  if(encoderCalibrationBusy() && (!strcmp(cmd,"auto") || !strcmp(cmd,"bal") ||
+      !strcmp(cmd,"manual") || !strcmp(cmd,"v") || !strcmp(cmd,"zv") || !strcmp(cmd,"on") ||
+      !strcmp(cmd,"zero") || !strcmp(cmd,"upright"))){
+    checkedPrintln(F("! encoder calibration active; wait for saved acknowledgment or stop to cancel"));return;
+  }
   // Repeated GUI/manual commands cannot bypass the latched overspeed recovery.
   // stop/off always remain available and cancel recovery.
   if((inSpinRecovery() || inUprightReturn()) && (!strcmp(cmd,"auto") || !strcmp(cmd,"bal") ||
@@ -867,8 +927,17 @@ void handleLine(char *line) {
                                    checkedPrintln(F("# x = 0 here")); }
   else if (!strcmp(cmd,"zhome")) { zhome_steps = ax_pos[AX_Z1];
                                    checkedPrintln(F("# z = 0 here")); }
-  else if (!strcmp(cmd,"zero"))  { eStop(); req_zero = true;
-                                   checkedPrintln(F("# zeroing: hold the pendulum still, hanging...")); }
+  else if (!strcmp(cmd,"zero") || !strcmp(cmd,"upright")) {
+    const bool vertical=!strcmp(cmd,"upright");int32_t raw=0;
+    if((!vertical && a1) || (a1 && (!encoder_reference::parse_count(a1,raw) || strtok(nullptr," \t")))){
+      checkedPrintln(F("! usage: zero (hanging), upright (held vertical), or upright <integer 0..4095>"));return;
+    }
+    eStop();
+    requested_upright_raw=raw;
+    calibration_request=vertical?(a1?3:2):1;
+    checkedPrintln(vertical?F("# upright calibration: hold straight up and still; drivers disabled"):
+                           F("# zero: hold hanging down and still; upright target will be updated; drivers disabled"));
+  }
   else if (!strcmp(cmd,"mag"))   { req_diag = true; }
   else if (!strcmp(cmd,"rate"))  { tele_hz = a1 ? constrain(atoi(a1),0,100) : 0;
                                    checkedPrintf("# telemetry %u Hz\n", tele_hz); }
@@ -888,17 +957,22 @@ void handleLine(char *line) {
         checkedPrintln(F("! expected a finite number")); return;
       }
       float *ptr = PARAMS[i].ptr;
-      const bool motion_limit = ptr == &p_vmax || ptr == &p_amax_s ||
+      const bool motion_limit = ptr == &p_vmax || ptr == &p_vmax_s || ptr == &p_vmax_b ||
+          ptr == &controller.approach_v || ptr == &controller.catch_v ||
+          ptr == &controller.approach_angle || ptr == &controller.catch_da || ptr == &p_amax_s ||
           ptr == &p_amax_b || ptr == &p_jmax || ptr == &p_rail ||
           ptr == &p_amax_m || ptr == &p_jmax_m;
+      const bool spin_limit=ptr==&controller.spin_trip_rad_s || ptr==&controller.spin_resume_rad_s;
       const bool gain_change=PARAMS[i].recalc || ptr==&controller.bal_pw || ptr==&p_bw ||
           ptr==&K1 || ptr==&K2 || ptr==&K3 || ptr==&K4;
-      if ((motion_limit || gain_change) && mode != M_IDLE) {
-        checkedPrintln(F("! stop before changing motion limits or balance gains")); return;
+      if ((motion_limit || gain_change || spin_limit) && mode != M_IDLE) {
+        checkedPrintln(F("! stop before changing motion limits, balance gains or spin limits")); return;
       }
       if (((motion_limit || ptr == &p_leff || ptr == &p_bw || ptr == &p_phase_soft) && want <= 0) ||
           (ptr == &p_rail && want <= rail_recovery::edge_margin+rail_recovery::inside_hysteresis) ||
-          (ptr == &p_vmax && want > VMAX_CEIL)) {
+          ((ptr == &p_vmax || ptr == &p_vmax_s || ptr == &p_vmax_b ||
+            ptr==&controller.approach_v || ptr==&controller.catch_v) && want > VMAX_CEIL) ||
+          (ptr==&controller.approach_angle && (want<0.65f || want>1.5f))) {
         checkedPrintf("! invalid motion limit (vmax ceiling %.5f m/s)\n", VMAX_CEIL);
         return;
       }
@@ -907,7 +981,24 @@ void handleLine(char *line) {
          ((ptr==&p_pc1 || ptr==&p_pc2) && want>=0)){
         checkedPrintln(F("! invalid poles: bal_pw 1..20, pw/pz positive, pc1/pc2 negative"));return;
       }
+      if(ptr==&p_bw && !swing_control::validEstimatorBandwidth(want)){
+        checkedPrintln(F("! estimator bw must be 0.1..100 Hz"));return;
+      }
+      if(spin_limit && !spin_recovery::validLimits(
+          ptr==&controller.spin_trip_rad_s?want:controller.spin_trip_rad_s,
+          ptr==&controller.spin_resume_rad_s?want:controller.spin_resume_rad_s)){
+        checkedPrintln(F("! spin limits require 0 < spin_resume_rad_s < spin_trip_rad_s"));return;
+      }
+      // User-locked tuning ceilings (2026-09-18); retain lower-value tuning.
+      const float user_max=ptr==&controller.spin_trip_rad_s?150.0f:
+          ptr==&p_bw?50.0f:ptr==&p_jmax?100.0f:
+          (ptr==&p_amax_s || ptr==&p_amax_b)?25.0f:
+          (ptr==&p_vmax || ptr==&p_vmax_s || ptr==&p_vmax_b)?1.5f:INFINITY;
+      if(want>user_max){
+        checkedPrintf("! user-locked maximum %s %.5f\n",PARAMS[i].name,user_max);return;
+      }
       *PARAMS[i].ptr = want;
+      if(ptr==&p_bw)req_estimator_reset=true;
       if (PARAMS[i].recalc) computeGains();
       checkedPrintf("= %s %.5f\n", PARAMS[i].name, *PARAMS[i].ptr);
       return;
@@ -927,13 +1018,14 @@ void handleLine(char *line) {
                   fabsf(vc)*60000.0f/mm_per_rev, p_vmax*60000.0f/mm_per_rev,
                   VMAX_CEIL*60000.0f/mm_per_rev, ISR_HZ*0.5f);
     if(inSpinRecovery())checkedPrintf("# overspeed recovery %s; |theta_dot|=%.2f rad/s, resume below %.1f rad/s when centered\n",
-        MODE_NAME[mode],fabsf(thd),spin_recovery::resume_rad_s);
+        MODE_NAME[mode],fabsf(thd),controller.spin_resume_rad_s);
     checkedPrintf("# serial baud=115200, host timeout=%lu ms, dropped events=%lu\n",(unsigned long)HOST_TIMEOUT_MS,(unsigned long)dropped_control_messages);
     checkedPrintf("# K = [%.3f %.3f %.3f %.3f]\n", K1,K2,K3,K4);
   }
   else if (!strcmp(cmd,"help")) {
     checkedPrintln(F("# auto bal manual v<mps> zv<mmps> zstop stop off on"));
-    checkedPrintln(F("# home zhome zero mag enc ping rate<hz> set get params stat"));
+    checkedPrintln(F("# home zhome zero upright [count] mag enc ping rate<hz> set get params stat"));
+    checkedPrintln(F("# zero: hanging down -> save upright half a turn away. upright: held straight up -> save current count."));
   }
   else checkedPrintln(F("! unknown command (try 'help')"));
 }
@@ -966,7 +1058,7 @@ void setup() {
   Serial.setTxBufferSize(4096);
   Serial.begin(115200);
   delay(300);
-  checkedPrintln(F("# ESP32 cart-pole swingup-175mm-60t-v21"));
+  checkedPrintln(F("# ESP32 cart-pole swingup-125mm-60t-v30"));
 
   // I2C comes up FIRST, while nothing else is competing for the CPU. Bringing
   // the 125 kHz step interrupt up first meant the very first bus transactions
@@ -1002,9 +1094,10 @@ void setup() {
                 CART_STEPS_PER_M/1000.0f, CART_MICROSTEPS, Z_STEPS_PER_MM);
   checkedPrintf("# cart speed ceiling %.2f m/s\n", VMAX_CEIL);
   delay(300);
-  encZeroBlocking();
-  checkedPrintf("# balance target: absolute encoder count %d; down-zero does not change this target\n",encoder_reference::upright_raw);
-  th_hat = encTheta();
+  loadEncoderReference();
+  enc_zero=enc_ticks+encoder_reference::difference(encoder_reference::opposite(enc_upright_raw),enc_last_raw);
+  checkedPrintf("# upright reference %ld counts (%s); startup retains it\n",(long)enc_upright_raw,reference_saved?"saved":"fallback; use upright or zero to calibrate");
+  th = th_hat = encTheta();
   home_steps = ax_pos[AX_CART];
   zhome_steps = ax_pos[AX_Z1];
   checkedPrintf("# K = [%.3f %.3f %.3f %.3f]\n", K1,K2,K3,K4);
@@ -1012,7 +1105,7 @@ void setup() {
                 p_leff, p_vmax, p_amax_s, p_amax_b, p_jmax);
   checkedPrintln(F("# Startup position is x=0: place cart at physical center before reset; no homing motion."));
   checkedPrintln(F("# Travel 300 mm; normal range +/-135 mm. Predictive braking -> return inside range; fault +/-140 mm."));
-  checkedPrintln(F("# Pendulum |theta_dot| >25 rad/s: brake, center, then resume below 10 rad/s; no full-turn check or dwell."));
+  checkedPrintf("# Pendulum |theta_dot| >%.2f rad/s: brake, center, then resume below %.2f rad/s; no full-turn check or dwell.\n",controller.spin_trip_rad_s,controller.spin_resume_rad_s);
   checkedPrintln(F("# bal: explicit upright-only start within 10deg; >50deg fall brakes, centers and disables; no restart."));
   checkedPrintln(F("# Drivers DISABLED. Motion commands enable; stop disables all drivers."));
   checkedPrintln(F("# ready. 'help' for commands."));
@@ -1028,8 +1121,7 @@ void loop() {
   flushControlMessages();
 
   if (diag_done) { diag_done = false; encPrintMagnet(); }
-  if (zero_done) { zero_done = false;
-                   checkedPrintf("# down reference recorded; fixed upright 3416 counts, theta = %.3f rad\n", th); }
+  saveEncoderReference();
   static uint32_t last = 0;
   if (tele_hz) {
     uint32_t period = 1000000UL / tele_hz;

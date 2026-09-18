@@ -1,6 +1,6 @@
-# Earlier captures — geometry unverified
+# Earlier captures — confirmed 125 mm / 11.05 g
 
-These records predate the user-confirmed 175 mm configuration. Their physical length and mass are not independently established, so they are not labeled as 100 mm or combined with the 175 mm set.
+On 2026-09-17 the user identified these pre-175 mm records as the 125 mm / 11.05 g arm, with the same two 5.85 g end weights. The original 100 mm label was incorrect. This directory name is retained to preserve existing source paths. [Corrected configuration and refit](../../125mm_11p05g/2026-09-15/README.md).
 
 | Capture | Available artifacts | Missing artifacts |
 |---|---|---|

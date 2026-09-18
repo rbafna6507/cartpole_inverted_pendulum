@@ -182,10 +182,29 @@
     {
       "candidate": "swingup-175mm-60t-v21",
       "decision": "User requested cart STEP25/DIR26; swap Z1 to18/19 to keep all outputs unique. Preserve Z2 16/17 and all motion limits."
+    },
+    {
+      "candidate": "swingup-175mm-60t-v22",
+      "decision": "Implement controlled rail stop/return/handoff after repeated rail cycles in September 17 logs. Keep default gains and .8/12/12/60 limits. Compiled and software tested, not uploaded.",
+      "assessment": "analysis/rail_recovery_v22.md"
+    },
+    {
+      "candidate": "swingup-125mm-60t-v23",
+      "decision": "User corrected the arm to 125 mm, confirmed prior 100 mm mass 11.05 g belonged to this arm, and retained two 5.85 g end weights. Refit the pre-175 mm records: 20 cycles, leff=0.124455 m, firmware 0.124 m. Defaults .8/12/12/60 and v22 recovery retained.",
+      "assessment": "analysis/pendulum_125mm_v23.md"
+    },
+    {
+      "candidate": "swingup-125mm-60t-v24",
+      "decision": "User requested spin recovery above 35 rad/s. Resume remains below 10 rad/s once cart is centered/stopped. 125 mm calibration and motion limits retained; not uploaded."
+    },
+    {
+      "candidate": "swingup-125mm-60t-v25",
+      "decision": "Recalibration after hanging angle was about 48 degrees wrong. Apply reference-checked upright3953; preserve raw captures. No braking/gain change; nonlinear mapping not validated.",
+      "assessment": "analysis/encoder_recalibration_v25.md"
     }
   ],
   "current_user_requested_settings": {
-    "firmware_id": "swingup-175mm-60t-v21",
+    "firmware_id": "swingup-125mm-60t-v25",
     "cart_step_gpio": 25,
     "cart_dir_gpio": 26,
     "vmax": 0.8,
@@ -193,8 +212,8 @@
     "amax_b": 12,
     "jmax": 60,
     "ke": 2.0,
-    "physical_trial": "v20 uploaded and verified; v21 pin swap not uploaded",
-    "validation": "v21 pin/driver harness, 16 simulator groups and ESP32 compile pass; not uploaded.",
+    "physical_trial": "v25 uploaded; upright3953, limits and disabled idle verified. Motion not tested.",
+    "validation": "Encoder-reference and serial harnesses, 17 simulator groups, ESP32 compile and upload readback passed.",
     "z1_step_gpio": 18,
     "z1_dir_gpio": 19,
     "pulley_teeth": 60,
@@ -203,11 +222,17 @@
     "jerk_rpm_per_s2": 30000,
     "boot_drivers_enabled": false,
     "stop_disables_all_drivers": true,
-    "spin_trip_rad_s": 25,
+    "spin_trip_rad_s": 35,
     "spin_resume_rad_s": 10,
     "cart_direction_inverted": false,
     "speed_rpm": 400,
-    "acceleration_rpm_per_s": 6000
+    "acceleration_rpm_per_s": 6000,
+    "physical_length_mm": 125,
+    "arm_mass_g": 11.05,
+    "end_mass_count": 2,
+    "end_mass_each_g": 5.85,
+    "leff": 0.124,
+    "encoder_upright_raw": 3953
   },
   "latest_user_observed_baseline": {
     "recorded_date": "2026-09-16",
@@ -235,5 +260,13 @@
     "status": "v18 trials reviewed; v19 direction flip prepared, not uploaded",
     "evidence": "analysis/upright_tuning.json",
     "instructions": "analysis/upright_tuning.md"
+  },
+  "compact_swingup_comparison": {
+    "results": "analysis/compact_swingup_v22.json",
+    "trials": 39,
+    "physical_validation": false,
+    "default_gains_changed": false,
+    "conclusion": "Higher kdx/lower vmax reduce room but also lift. kpx=60 reaches upright in three sampled initial states, with one sustained model balance; peak rail use is not reduced. No compact reliable swing-up setting established.",
+    "applies_to": "Historical 175 mm v22 engine only; not evidence for current 125 mm arm"
   }
 }

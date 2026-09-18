@@ -43,19 +43,27 @@ def main():
     x=data['reference_deg']
     ax.plot(x,data['ideal_counts_from_down'],'--',color='#7b8794',label='Ideal: 4096 counts/turn, anchored at 0°')
     ax.plot(x,data['unwrapped_counts'],'o-',color='#126e82',lw=2.2,label='Saved measurements (unwrapped)')
-    ax.scatter([180],[data['unwrapped_counts'][2]],marker='*',s=220,color='#d27614',zorder=5,label='Balance target: raw 3416')
+    ax.scatter([180],[data['unwrapped_counts'][2]],marker='*',s=220,color='#d27614',zorder=5,label=f"Measured upright: raw {data['upright_raw']:.1f}")
     for angle,raw,y in zip(x,data['raw'],data['unwrapped_counts']):
-        ax.annotate(f'{int(angle)}°: raw {raw:.0f}',(angle,y),xytext=(6,12),textcoords='offset points',fontsize=10)
-    ax.set(ylabel='Encoder counts, unwrapped across zero',xlim=(-12,302),ylim=(-1900,1790))
+        ax.annotate(f'{int(angle)}°: raw {raw:.0f}',(angle,y),xytext=(-6 if angle==270 else 6,12),ha='right' if angle==270 else 'left',textcoords='offset points',fontsize=10)
+    ax.set(ylabel='Encoder counts, unwrapped across zero',xlim=(-12,302))
     ax.set_xticks(x);ax.grid(alpha=.18);ax.legend(loc='lower left',fontsize=10)
     err.axhline(0,color='#7b8794',lw=1)
     bars=err.bar(x,data['angle_error_deg'],width=33,color=['#80929a','#126e82','#d27614','#126e82'])
     for bar,value in zip(bars,data['angle_error_deg']):
         err.annotate(f'{value:+.2f}°',(bar.get_x()+bar.get_width()/2,value),xytext=(0,5 if value>=0 else -15),textcoords='offset points',ha='center')
-    err.set(xlabel='Manually positioned reference angle (degrees)',ylabel='Error from ideal (degrees)',ylim=(-26,9),xlim=(-12,302))
+    err.set(xlabel='Manually positioned reference angle (degrees)',ylabel='Error from ideal (degrees)',xlim=(-12,302))
+    lo=min(0,min(data['angle_error_deg']));hi=max(0,max(data['angle_error_deg']));pad=max(3,(hi-lo)*.18)
+    err.set_ylim(lo-pad,hi+pad)
     err.set_xticks(x);err.grid(axis='y',alpha=.18)
     fig.get_layout_engine().set(rect=(0,.085,1,.90))
-    fig.text(.065,.035,'One reading per position; no nonlinear correction fitted.\nSession contains corrupted serial replies; differences may include placement or transmission errors.',fontsize=10,color='#58616b')
+    counts=[p.get('sample_count',1) for p in report.get('poses',[])]
+    invalid=sum(not s.get('valid',True) for p in report.get('poses',[]) for s in p.get('samples',[]))
+    samples=[s for p in report.get('poses',[]) for s in p.get('samples',[])]
+    weak=sum(bool(s.get('status',0)&0x10) for s in samples)
+    strong=sum(bool(s.get('status',0)&0x08) for s in samples)
+    note=f'Readings per pose: {counts}; stale/invalid: {invalid}; weak-magnet flags: {weak}; strong-magnet flags: {strong}.\nNo nonlinear correction fitted. Differences include manual placement and sensor error.'
+    fig.text(.065,.035,note,fontsize=10,color='#58616b')
     for ext in ['png','svg']:
         fig.savefig(str(output)+'.'+ext,dpi=170,facecolor='white')
     Path(str(output)+'.json').write_text(json.dumps(data,indent=2)+'\n')

@@ -1,10 +1,10 @@
-# 175 mm Pendulum Lab
+# Pendulum Lab — current 125 mm arm
 
-Offline browser simulator for the 60T cart, 175 mm pendulum and 300 mm rail. Open `index.html` directly or serve the repository using `python3 -m http.server 8765 --bind 127.0.0.1`, then open `/simulator175/`.
+Offline browser simulator for the 60T cart, 125 mm pendulum and 300 mm rail. Open `index.html` directly or serve the repository using `python3 -m http.server 8765 --bind 127.0.0.1`, then open `/simulator175/`.
 
 ## Current defaults
 
-The startup preset follows v20: vmax=0.8 m/s, amax_s=amax_b=12 m/s², jmax=60 m/s³, 60T GT2 pulley and 1/16 microsteps (26,666.667 steps/m). The capture window is 0.60 rad, with direction, rate, velocity headroom, rail and acceleration-ramp checks. The governor anticipates speed gained during jerk ramp-down. JavaScript equations are checked against the compiled firmware headers.
+The startup preset follows v26: vmax=0.8 m/s, amax_s=amax_b=12 m/s², jmax=60 m/s³, 60T GT2 pulley and 1/16 microsteps (26,666.667 steps/m). Separate vmax_s/vmax_b policy caps default to 0.8 m/s. The near-upright approach targets 0.3 m/s starting at 0.8 rad. The capture window is 0.60 rad with independent catch_v=0.3 m/s, acceleration mismatch <=4 m/s², and a 180 ms jerk/rail forecast. Raising the hard ceiling above the policy caps does not change automatic motion. Historical parameter presets run the current engine; archived pass counts do not apply. The governor anticipates speed gained during jerk ramp-down. JavaScript equations are checked against the compiled firmware headers.
 
 - **Current firmware snapshot:** source configuration at the latest bundle build.
 - **Recorded 20T:** parameters from the third automatic trial in `run_20260916_122300`: 0.75/15/15/50, firmware v7. Experiments use the current engine; this is a parameter preset, not exact historical firmware replay.
@@ -12,7 +12,23 @@ The startup preset follows v20: vmax=0.8 m/s, amax_s=amax_b=12 m/s², jmax=60 m/
 
 Choose a scenario/input style, edit limits, and run or compare. Charts show angle, cart position, command speed, acceleration, jerk and STEP rate. Initial angular rate, cart speed and acceleration can be set under plant assumptions to reproduce a measured handoff state. Start angle is measured from hanging, except in balance recovery, where it is measured from upright. Export traces and settings before refreshing; experiments are in browser memory.
 
-## Evidence
+## Current geometry and evidence
+
+The current arm is 125 mm / 11.05 g with two 5.85 g end weights (22.75 g total).
+The user corrected the original 100 mm label on 2026-09-17 and identified the
+pre-175 mm captures as this arm. Their refit supplies **0.124454888 m** plant
+length, **0.124 m** controller length and **0.913383 s⁻¹** equivalent damping,
+from 20 qualifying cycles in three runs. Balance gains and swing-up energy
+use the current controller length. Current and upright presets use this model;
+recorded and historical candidate presets retain 175 mm dynamics. The calibration
+selector labels each capture's physical arm length. The directory name remains
+`simulator175` to preserve existing links.
+
+[125 mm provenance and fit](../pendulum_characterization/125mm_11p05g/2026-09-15/README.md).
+The measured period identifies effective length, not detailed mass distribution
+or motor tracking. Capture overlays reuse fitting data, not held-out validation.
+
+## Archived 175 mm evidence
 
 The three confirmed free-decay captures provide 33 cycles, effective length 0.165775568 m (firmware 0.166 m), and equivalent viscous damping 0.402279 s⁻¹. Physical length is 175 mm. Original calibration logs are unchanged and their hashes are checked on rebuild.
 
@@ -46,20 +62,23 @@ Optional browser test: `node simulator175/browser_test.js` with a local server r
 
 The older settling search/assessment files are retained as historical 60T experiments. Do not interpret their old pass counts as evidence for current v8 geometry and control logic.
 
-## v10 rail recovery
+## v22 rail recovery
 
 Normal automatic travel is ±135 mm within the ±150 mm physical rail. At that
 threshold, or earlier when predicted stopping distance requires it, automatic
-control pauses for braking and an inward return. Swing-up resumes once moving
-inward inside ±130 mm, without seeking center or waiting at rest. Recovery
+control pauses until speed and acceleration are near zero, then requests an
+inward return at up to 0.15 m/s and 1.5 m/s². The stop prediction reserves the
+final acceleration ramp-out. Swing-up resumes inward inside ±130 mm with
+|v|≤0.155 m/s, |a|≤1.5 m/s² and a cleared braking latch, without seeking center
+or waiting at rest. Recovery
 keeps the position origin. Timeout is 8 s; the hard fault remains ±140 mm.
 The simulator records recovery phases and durations. DDS uses the firmware's
 7 µs tick; its pulse ceiling is approximately 71,429 steps/s.
 Historical comparisons describe their named engine revisions and limits.
 
-## Angular-rate failsafe (v18)
+## Angular-rate failsafe (v24)
 
-The current engine trips immediately when filtered |θ̇| > 25 rad/s, brakes and
+The current engine trips immediately when filtered |θ̇| > 35 rad/s, brakes and
 centers the cart with the existing jerk limit, then resumes swing-up once
 centered/stopped and valid |θ̇| < 10 rad/s. There is no full-turn requirement,
 angle gate, or dwell. Recovery modes are `spin_brake`, `spin_center`, and
@@ -68,3 +87,39 @@ angle gate, or dwell. Recovery modes are `spin_brake`, `spin_center`, and
 ## Manual upright trials
 
 Choose **Manual upright · candidate 8** or `?preset=upright`. The balance scenario now represents a manually started upright-only trial: `bal_pw=8`, ±50° fall abort, center, stop, no swing-up restart. Set `bal_pw=7` for the baseline comparison. Simulation initial states bypass the firmware's ±10° start gate so recovery can be stress-tested. See [tuning evidence and instructions](../analysis/upright_tuning.md).
+
+## Compact swing-up comparison
+
+The v22 results record the old engine hash; the engine has since changed to 125 mm.
+Running `node analysis/compact_swingup_v22.js` now is a new geometry comparison,
+not an exact reproduction of the archived 39 historical 175 mm offline trials of
+speed, cart damping/centering, energy gain and phase smoothing.
+[Results and limitations](../analysis/rail_recovery_v22.md). They do not change
+source defaults or establish physical swing-up performance.
+
+## September 18 hardware update
+
+The recording selector now includes all three completed trials from
+`run_20260918_103825`, with acknowledged settings and frozen source files.
+The formatted initial paste was rejected: the first two trials actually used
+vmax=0.8 and rail=0.15; the last trial used rail=0.1 (only ±85 mm normal operation).
+Recorded settings presets preserve their measured initial angle and pulse position.
+They are not promises of identical closed-loop trajectories.
+
+The simulator's default encoder sampling is now 1 ms to match the firmware's
+1 kHz sampling loop. An optional encoder-offset assumption tests angle-reference
+sensitivity without changing the physical plant. The terminal-command export
+uses `set NAME VALUE`, omits units, starts with `stop`, ends with `params`, and
+does not start motion. It exports the selected experiment, not unsaved form edits.
+
+A recent provisional plant fit and the gain assessment are documented in
+[September 18 assessment](../analysis/sep18/assessment.md). The old, separately
+calibrated plant remains available. The new fit is based on stopped-command
+intervals, not independent cart-motion measurements, and is not applied to
+firmware. Angle nonlinearity, actual motor tracking, and mechanical disturbance
+remain unmeasured. Do not interpret an isolated simulated capture as sustained
+balance; the same final-five-second criterion applies to all tested candidates.
+
+## v28 encoder observer
+
+Current and upright defaults use `bw=30` Hz. The observer equations match the firmware and have C++/JavaScript parity coverage across angle wrap. A quantized 1–5 Hz sine produces about 9 ms of rate phase delay, versus 28–30 ms at `bw=10`. Higher bandwidth increases noise; this does not establish hardware stability. Firmware now rejects bandwidth outside 0.1–100 Hz and resets its observer state when bandwidth changes while stopped. Historical presets keep their recorded bandwidth.

@@ -24,20 +24,23 @@ struct State {
   bool update(float x,const cart_motion::State &motion,float dt) {
     if(phase==NONE)return false;
     elapsed+=dt;
-    // Once outward travel has stopped, direct motion back into the usable
-    // range. No center-seeking or dwell: release once safely inside and
-    // moving inward (or nearly stopped with inward acceleration).
+    // Finish the stop, including ramping acceleration out, before returning.
+    const bool stopped=fabsf(motion.velocity)<=0.005f &&
+        fabsf(motion.acceleration)<=0.1f;
+    if(phase==BRAKING && stopped)phase=RETURNING;
     const bool inward=motion.velocity*side < -0.005f ||
         (motion.velocity*side<=0.005f && motion.acceleration*side<=0);
-    if(phase==BRAKING && inward)phase=RETURNING;
-    if(phase==RETURNING && inward && fabsf(x)<=exit_boundary){reset();return true;}
+    const bool settled=fabsf(motion.velocity)<=return_speed+0.005f &&
+        fabsf(motion.acceleration)<=return_acceleration;
+    if(phase==RETURNING && inward && settled && motion.brake_direction==0 &&
+        fabsf(x)<=exit_boundary){reset();return true;}
     return false;
   }
   float demand(float,const cart_motion::State &motion,
                float vmax,float amax,float jerk,float dt) const {
     const float target=phase==RETURNING ? -side*fminf(return_speed,vmax) : 0;
     const float cap=phase==RETURNING ? fminf(return_acceleration,amax) : amax;
-    return cart_motion::velocityAccel(motion.velocity,target,cap,jerk,dt);
+    return cart_motion::settledVelocityAccel(motion.velocity,motion.acceleration,target,cap,jerk,dt);
   }
 };
 }

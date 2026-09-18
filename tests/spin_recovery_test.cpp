@@ -4,8 +4,13 @@
 #include <initializer_list>
 using namespace spin_recovery;
 void thresholdTests(){
- for(float w:{0.f,24.999f,25.f,-24.999f,-25.f})assert(!trigger(w));
- for(float w:{25.001f,-25.001f,30.f,-30.f})assert(trigger(w));
+ for(float w:{0.f,25.f,-25.f,30.f,-30.f,149.999f,150.f,-149.999f,-150.f})assert(!trigger(w));
+ for(float w:{150.001f,-150.001f,160.f,-160.f})assert(trigger(w));
+}
+void customTests(){
+ assert(validLimits(50,10));assert(!validLimits(10,10));assert(!validLimits(5,10));assert(!validLimits(50,0));assert(!validLimits(INFINITY,10));
+ assert(trigger(36,35));assert(!trigger(36,50));assert(trigger(-51,50));
+ State s;cart_motion::State m;s.begin(0);assert(!s.update(0,m,20,true,0,20));assert(s.update(0,m,19.9f,true,0,20));
 }
 void stateTests(){
  State s;cart_motion::State m;
@@ -42,7 +47,7 @@ void trajectory(float x,float v,float a){
  assert(done);assert(fabsf(x)<=.003f);assert(fabsf(m.velocity)<=.005f);
  printf("PASS center then immediate low-rate release; peak |x| %.2f mm\n",peak*1000);
 }
-int main(){thresholdTests();stateTests();
+int main(){thresholdTests();customTests();stateTests();
  for(int d:{-1,1}){trajectory(d*.03f,d*.6f,d*2);trajectory(d*.136f,0,0);trajectory(d*.1f,-d*.2f,0);}
  puts("Rate recovery checks passed.");
 }

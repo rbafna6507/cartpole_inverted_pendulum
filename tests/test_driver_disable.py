@@ -51,6 +51,7 @@ bool recovery_was_manual=false,req_balance=false,upright_only=false;
 Pump upright_return;
 struct Response {bool armed=true;} response_watch;
 float v_manual=1,vc=1,acc_cmd=1,zv_target=1,zv_now=1;
+void cancelEncoderCalibration(){}
 '''
         pin_defs='\n'.join(re.findall(r'^#define PIN_(?:CART|Z1|Z2)_(?:STEP|DIR)\s+\d+',SOURCE,re.M))
         self.assertIn('#define PIN_CART_STEP   25',pin_defs)
@@ -78,13 +79,13 @@ float v_manual=1,vc=1,acc_cmd=1,zv_target=1,zv_now=1;
  for(int i=0;i<3;++i){ax_inc[i]=0x80000000u;ax_acc[i]=0xffffffffu;}
  for(int n=0;n<20;++n)onStepTimer();
  assert(pulse_writes==0);for(int i=0;i<3;++i)assert(ax_pos[i]==0);
- // Verify actual DDS functions deliver 0.8 m/s without clamping at the new timer period.
+ // Verify actual DDS functions deliver 1.5 m/s without clamping at the new timer period.
  for(int i=0;i<3;++i){ax_inc[i]=0;ax_acc[i]=0;}
  energize(true);axSetRate(0,cart_hardware::default_speed*cart_hardware::steps_per_m,false);
  const int ticks=200000;
  for(int n=0;n<ticks;++n)onStepTimer();
- // 0.8 m/s * 3200 pulses/rev / 0.120 m/rev, independent of firmware constants.
- const double expected=(.8*3200/.120)*ticks*cart_hardware::step_timer_period_us/1000000;
+ // 1.5 m/s * 3200 pulses/rev / 0.120 m/rev, independent of firmware constants.
+ const double expected=(1.5*3200/.120)*ticks*cart_hardware::step_timer_period_us/1000000;
  assert(std::abs(ax_pos[0]-expected)<=1);assert(pulse_writes==ax_pos[0]);
  eStop();assert(enable_level==HIGH);
 }

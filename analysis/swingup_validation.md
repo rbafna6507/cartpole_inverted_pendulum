@@ -1,6 +1,45 @@
-# Swing-up controller adjustment — 175 mm / 14.2 g
+# Swing-up controller validation
 
-## Latest revision: swingup-175mm-60t-v21
+## Latest revision: swingup-125mm-60t-v25
+
+Reference-checked upright raw3953 replaces stale raw3416 after the arm swap.
+20 readings per pose, with upright/left reference rechecks. Remaining left-pose
+error is 18.36°; down showed weak-field flag. Uniform count scale retained;
+no nonlinear correction claimed. [Assessment](encoder_recalibration_v25.md).
+Encoder-reference and serial harnesses, 17 simulator groups and ESP32 compile
+pass (342463 program bytes, 22720 global bytes). **Uploaded and serial-verified; motion untested.**
+[Upload verification](v25_upload_verification.json).
+
+## Previous revision: swingup-125mm-60t-v24
+
+Spin recovery triggers immediately when filtered |theta_dot| >35 rad/s in
+both directions. Resume remains strictly below 10 rad/s after centering and
+settling cart motion. 125 mm fit, gains and .8/12/12/60 limits retained.
+C++ spin threshold/recovery suite and 17 simulator groups pass. ESP32 compile:
+342447 program bytes, 22720 global bytes. **Uploaded and serial-verified; motion untested.**
+[Upload verification](v24_upload_verification.json).
+
+## Previous revision: swingup-125mm-60t-v23
+
+125 mm / 11.05 g arm, two 5.85 g end weights. User corrected the prior 100 mm
+label and identified the pre-175 mm captures as this arm. A 20-cycle refit gives
+0.124455 m effective length; firmware uses 0.124 m and recomputes gains,
+energy normalization and capture prediction. Simulator damping is 0.913383 s⁻¹.
+60T/GPIO25/26, .8/12/12/60 limits and v22 recovery remain.
+17 simulator groups and ESP32 compile pass (342447 program, 22720 global bytes).
+**v23 is not uploaded or physically tested.** [Details](pendulum_125mm_v23.md).
+
+## Previous revision: swingup-175mm-60t-v22
+
+Controlled rail stop now settles velocity and acceleration; slow inward return
+hands back only inside ±130 mm with |v|≤0.155 m/s and |a|≤1.5 m/s².
+Default gains/limits, 60T geometry and cart GPIO25/26 are retained.
+2,296 sampled/mirrored recovery cases, motion/rail/spin/upright recovery suites,
+driver and serial harnesses, capture checks and 17 simulator groups pass.
+ESP32 compile: 342447 program bytes, 22720 global bytes.
+**Not uploaded or physically tested.** See [assessment](rail_recovery_v22.md).
+
+## Previous revision: swingup-175mm-60t-v21
 
 Cart STEP25/DIR26; Z1 swapped to STEP18/DIR19; Z2 remains STEP16/DIR17.
 60T geometry and linear limits remain 0.8/12/12/60. Pin/driver harness,

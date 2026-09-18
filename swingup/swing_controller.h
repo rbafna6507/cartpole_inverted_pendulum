@@ -2,6 +2,7 @@
 #include <math.h>
 #include "cart_motion.h"
 #include "cart_mechanics.h"
+#include "spin_recovery.h"
 
 // Shared by firmware and nonlinear closed-loop simulation. SI units.
 namespace swing_control {
@@ -10,19 +11,24 @@ constexpr float kPi = 3.14159265358979323846f;
 inline float wrap(float x) { return atan2f(sinf(x), cosf(x)); }
 
 struct Parameters {
-  float leff = 0.166f;              // 33 same-side cycles at 5–20 degrees
+  float leff = 0.124f;              // 125 mm arm: 20 low-angle cycles in three prior captures
   float pw = 7.0f, pz = 0.85f;
   float bal_pw = 8.0f;             // upright-only trial; auto retains pw
   float pc1 = -0.8f, pc2 = -1.2f;
-  float vmax = cart_hardware::default_speed; // 400 RPM = 0.8 m/s on 60T
-  float amax_s = cart_hardware::default_acceleration; // 18,000 RPM/s
-  float amax_b = cart_hardware::default_acceleration; // 12 m/s^2
-  float jmax = cart_hardware::default_jerk; // 90,000 RPM/s^2 = 60 m/s^3
+  float vmax = cart_hardware::default_speed; // 750 RPM = 1.5 m/s on 60T
+  // vmax is a hard command ceiling; these are independent policy limits.
+  float vmax_s = 1.5f, vmax_b = 1.5f;
+  float approach_v = 0.3f, catch_v = 0.3f;
+  float approach_angle = 0.8f, catch_da = 4.0f;
+  float amax_s = cart_hardware::default_acceleration; // 12,500 RPM/s on 60T
+  float amax_b = cart_hardware::default_acceleration; // 25 m/s^2
+  float jmax = cart_hardware::default_jerk; // 50,000 RPM/s^2 = 100 m/s^3 on 60T
   float amax_m = 0.5f, jmax_m = 10.0f;
-  float ke = 2.0f, kpx = 30.0f, kdx = 0.5f;
-  float phase_soft = 1.0f;          // rad/s scale of smooth phase feedback
+  float ke = 8.0f, kpx = 80.0f, kdx = 2.0f;
+  float phase_soft = 2.0f;          // rad/s scale of smooth phase feedback
   float catch_a = 0.60f, catch_r = 3.0f, giveup = 0.80f;
-  float rail = 0.150f, bw = 10.0f, vman = 0.05f;
+  float spin_trip_rad_s=spin_recovery::trip_rad_s, spin_resume_rad_s=spin_recovery::resume_rad_s;
+  float rail = 0.150f, bw = 50.0f, vman = 0.05f;
 };
 struct Gains { float k1, k2, k3, k4; };
 inline Gains gains(const Parameters &p) {
@@ -44,6 +50,14 @@ inline float balance(const Gains &k, float theta, float omega, float x, float v)
 inline float energy(float theta, float omega, float leff) {
   return 0.5f*leff/kGravity*omega*omega+cosf(theta);
 }
+inline bool validEstimatorBandwidth(float hz) {
+  return hz>=0.1f && hz<=100.0f;
+}
+inline void resetEstimate(float measured, float &angle, float &rate) {
+  angle=wrap(measured); rate=0;
+}
+// At 1 kHz, bw=30 Hz gives about 9 ms rate phase delay over 1-5 Hz.
+// Keep wrapped innovations: differentiating raw counts would spike at rollover.
 inline void estimate(float measured, float bandwidth, float dt, float &angle, float &rate) {
   const float w = 2*kPi*bandwidth;
   const float error = wrap(measured-angle);
@@ -54,8 +68,32 @@ struct PumpState {
   float elapsed = 0, quiet = 0;
   void reset() { elapsed = quiet = 0; }
 };
+// Changing an unused hard ceiling cannot change the requested motion.
+inline float speedLimit(const Parameters &p, bool balancing) {
+  return fminf(p.vmax, balancing ? p.vmax_b : p.vmax_s);
+}
+inline float recoverySpeedLimit(const Parameters &p) {
+  return fminf(p.vmax, fmaxf(p.vmax_s,p.vmax_b));
+}
+// Begin preparing the actuator before the capture gate. Blend energy pumping
+// into balance demand on the inbound arc; reduce the planned speed smoothly.
+// This changes the target acceleration, never the current velocity/acceleration.
+inline float approach(const Parameters &p, float theta, float omega, float x,
+                      float v, float acceleration, float pump, float dt,
+                      const Gains *feedback=nullptr) {
+  const bool inbound=theta*omega<0 || fabsf(theta)<0.15f;
+  const float span=fmaxf(0.05f,p.approach_angle-p.catch_a);
+  const float weight=inbound?cart_motion::clamp((p.approach_angle-fabsf(theta))/span,0,1):0;
+  const float request=(1-weight)*pump+weight*balance(feedback?*feedback:gains(p),theta,omega,x,v);
+  const float speed=speedLimit(p,false);
+  const float cap=speed*(1-weight)+fminf(speed,p.approach_v)*weight;
+  const float upper=cart_motion::settledVelocityAccel(v,acceleration,cap,p.amax_s,p.jmax,dt);
+  const float lower=cart_motion::settledVelocityAccel(v,acceleration,-cap,p.amax_s,p.jmax,dt);
+  return cart_motion::clamp(request,lower,upper);
+}
 inline float swing(const Parameters &p, PumpState &s, float theta, float omega,
-                   float x, float v, float dt) {
+                   float x, float v, float dt, float acceleration=0,
+                   const Gains *feedback=nullptr) {
   s.elapsed += dt;
   // Continuous phase feedback replaces the noisy sign relay. Small sensor
   // motion now produces a small demand, not a full +/- energy-pump reversal.
@@ -67,22 +105,33 @@ inline float swing(const Parameters &p, PumpState &s, float theta, float omega,
   // No repeated full-acceleration kicks when the motor fails to follow.
   if (s.quiet>0.30f && s.elapsed<1.50f && fabsf(x)<0.10f)
     a = fminf(1.0f, p.amax_s);
-  return cart_motion::clamp(a, -p.amax_s, p.amax_s);
+  return approach(p,theta,omega,x,v,acceleration,cart_motion::clamp(a,-p.amax_s,p.amax_s),dt,feedback);
 }
 inline bool canCapture(const Parameters &p, const Gains &k, float theta,
                        float omega, float x, float v, float acceleration=0) {
-  const float demand = balance(k, theta, omega, x, v);
-  if (fabsf(theta)>=p.catch_a || fabsf(omega)>=p.catch_r ||
-      fabsf(x)>=fminf(0.12f,p.rail-0.03f) || fabsf(v)>=0.95f*p.vmax ||
-      fabsf(demand)>=p.amax_b) return false;
-  // Engage earlier on approach, not while departing the expanded window.
-  if (fabsf(theta)>0.20f && theta*omega>0) return false;
-  // Estimate the initial motion while the existing acceleration slews toward
-  // balance demand. A capped short forecast avoids claiming a full motor model.
-  const float ramp = fminf(0.10f, fabsf(demand-acceleration)/p.jmax);
-  const float alpha = (kGravity*sinf(theta)-acceleration*cosf(theta))/p.leff;
-  const float predicted = theta+omega*ramp+0.5f*alpha*ramp*ramp;
-  return fabsf(predicted)<p.giveup;
+  const float demand=balance(k,theta,omega,x,v);
+  if(fabsf(theta)>=p.catch_a || fabsf(omega)>=p.catch_r ||
+     fabsf(x)>=fminf(0.12f,p.rail-0.03f) ||
+     fabsf(v)>=fminf(p.catch_v,speedLimit(p,true)) ||
+     fabsf(demand)>=p.amax_b || fabsf(demand-acceleration)>p.catch_da)return false;
+  if(fabsf(theta)>0.20f && theta*omega>0)return false;
+  // Bounded 180 ms forecast using the same jerk/speed/rail governor. Reject a
+  // capture whose correction immediately relatches rail braking or diverges.
+  // This is a feasibility screen, not a guarantee of physical motor tracking.
+  const float initial=kGravity/p.leff*theta*theta+omega*omega,dt=0.005f;
+  float q=theta,w=omega,xx=x;
+  cart_motion::State motion;motion.velocity=v;motion.acceleration=acceleration;
+  for(int i=0;i<36;++i){
+    const float request=balance(k,q,w,xx,motion.velocity);
+    motion=cart_motion::advance(motion,xx,request,speedLimit(p,true),p.amax_b,
+                               fmaxf(p.amax_s,p.amax_b),p.jmax,p.rail,dt);
+    if(motion.brake_direction)return false;
+    xx+=motion.velocity*dt;
+    const float alpha=(kGravity*sinf(q)-motion.acceleration*cosf(q))/p.leff;
+    q=wrap(q+w*dt+0.5f*alpha*dt*dt);w+=alpha*dt;
+    if(fabsf(q)>=p.giveup || fabsf(xx)>p.rail-0.02f)return false;
+  }
+  return kGravity/p.leff*q*q+w*w<=initial*1.05f+0.01f;
 }
 
 // This observes pendulum response, NOT motor position. It can detect the gross

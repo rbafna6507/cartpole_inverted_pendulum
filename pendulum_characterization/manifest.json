@@ -4,7 +4,7 @@
   "runs": [
     {
       "capture_id": "pendulum_20260915_164630",
-      "configuration": "legacy_geometry_unverified",
+      "configuration": "125mm_11p05g",
       "capture_local_time_from_filename": "2026-09-15T16:46:30",
       "timestamp_note": "Timestamp preserved from original filename; original files did not record a timezone.",
       "files": [
@@ -18,11 +18,13 @@
       "missing_artifacts": [
         "_metrics.json",
         ".png"
-      ]
+      ],
+      "original_configuration_label": "legacy_geometry_unverified",
+      "geometry_confirmation": "User correction 2026-09-17: original 100 mm label was wrong; earlier arm was 125 mm / 11.05 g with unchanged end weights."
     },
     {
       "capture_id": "pendulum_20260915_165535",
-      "configuration": "legacy_geometry_unverified",
+      "configuration": "125mm_11p05g",
       "capture_local_time_from_filename": "2026-09-15T16:55:35",
       "timestamp_note": "Timestamp preserved from original filename; original files did not record a timezone.",
       "files": [
@@ -45,11 +47,13 @@
           "bytes": 175258
         }
       ],
-      "missing_artifacts": []
+      "missing_artifacts": [],
+      "original_configuration_label": "legacy_geometry_unverified",
+      "geometry_confirmation": "User correction 2026-09-17: original 100 mm label was wrong; earlier arm was 125 mm / 11.05 g with unchanged end weights."
     },
     {
       "capture_id": "pendulum_20260915_165853",
-      "configuration": "legacy_geometry_unverified",
+      "configuration": "125mm_11p05g",
       "capture_local_time_from_filename": "2026-09-15T16:58:53",
       "timestamp_note": "Timestamp preserved from original filename; original files did not record a timezone.",
       "files": [
@@ -72,11 +76,13 @@
           "bytes": 198148
         }
       ],
-      "missing_artifacts": []
+      "missing_artifacts": [],
+      "original_configuration_label": "legacy_geometry_unverified",
+      "geometry_confirmation": "User correction 2026-09-17: original 100 mm label was wrong; earlier arm was 125 mm / 11.05 g with unchanged end weights."
     },
     {
       "capture_id": "pendulum_20260915_170232",
-      "configuration": "legacy_geometry_unverified",
+      "configuration": "125mm_11p05g",
       "capture_local_time_from_filename": "2026-09-15T17:02:32",
       "timestamp_note": "Timestamp preserved from original filename; original files did not record a timezone.",
       "files": [
@@ -95,11 +101,13 @@
       ],
       "missing_artifacts": [
         ".png"
-      ]
+      ],
+      "original_configuration_label": "legacy_geometry_unverified",
+      "geometry_confirmation": "User correction 2026-09-17: original 100 mm label was wrong; earlier arm was 125 mm / 11.05 g with unchanged end weights."
     },
     {
       "capture_id": "pendulum_20260915_170334",
-      "configuration": "legacy_geometry_unverified",
+      "configuration": "125mm_11p05g",
       "capture_local_time_from_filename": "2026-09-15T17:03:34",
       "timestamp_note": "Timestamp preserved from original filename; original files did not record a timezone.",
       "files": [
@@ -122,11 +130,13 @@
           "bytes": 153868
         }
       ],
-      "missing_artifacts": []
+      "missing_artifacts": [],
+      "original_configuration_label": "legacy_geometry_unverified",
+      "geometry_confirmation": "User correction 2026-09-17: original 100 mm label was wrong; earlier arm was 125 mm / 11.05 g with unchanged end weights."
     },
     {
       "capture_id": "pendulum_20260915_170518",
-      "configuration": "legacy_geometry_unverified",
+      "configuration": "125mm_11p05g",
       "capture_local_time_from_filename": "2026-09-15T17:05:18",
       "timestamp_note": "Timestamp preserved from original filename; original files did not record a timezone.",
       "files": [
@@ -149,11 +159,13 @@
           "bytes": 175564
         }
       ],
-      "missing_artifacts": []
+      "missing_artifacts": [],
+      "original_configuration_label": "legacy_geometry_unverified",
+      "geometry_confirmation": "User correction 2026-09-17: original 100 mm label was wrong; earlier arm was 125 mm / 11.05 g with unchanged end weights."
     },
     {
       "capture_id": "pendulum_20260915_170610",
-      "configuration": "legacy_geometry_unverified",
+      "configuration": "125mm_11p05g",
       "capture_local_time_from_filename": "2026-09-15T17:06:10",
       "timestamp_note": "Timestamp preserved from original filename; original files did not record a timezone.",
       "files": [
@@ -176,7 +188,9 @@
           "bytes": 206216
         }
       ],
-      "missing_artifacts": []
+      "missing_artifacts": [],
+      "original_configuration_label": "legacy_geometry_unverified",
+      "geometry_confirmation": "User correction 2026-09-17: original 100 mm label was wrong; earlier arm was 125 mm / 11.05 g with unchanged end weights."
     },
     {
       "capture_id": "pendulum_20260915_184743",

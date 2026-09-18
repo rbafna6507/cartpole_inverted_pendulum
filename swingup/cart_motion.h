@@ -21,22 +21,37 @@ inline float velocityAccel(float velocity, float target, float amax,
   return error >= 0 ? a : -a;
 }
 
-// Distance until outward velocity first reaches zero, ramping acceleration
-// down at -jerk, then holding -amax if necessary. Includes initial outward
-// acceleration, which the old v^2/(2*a) envelope omitted.
+// Account for acceleration already in progress when approaching a velocity.
+// The remaining velocity change while acceleration slews to zero is a*|a|/(2*j).
+// Reserve one tick so a discrete update starts the ramp-out before overshooting.
+inline float settledVelocityAccel(float velocity, float acceleration, float target,
+                                  float amax, float jerk, float dt) {
+  const float error=target-velocity;
+  const float remaining=acceleration*acceleration/(2*jerk)+fabsf(acceleration)*dt;
+  if(acceleration*error>0 && fabsf(error)<=remaining) return 0;
+  return velocityAccel(velocity,target,amax,jerk,dt);
+}
+
+// Maximum outward distance for a jerk-limited stop ending at v=0 AND a=0.
+// Triangular acceleration when possible, otherwise ramp/hold/ramp. Unlike
+// stopping only at the first velocity zero, this reserves the final jerk ramp.
 inline float stoppingDistance(float velocity, float acceleration,
                               float amax, float jerk) {
-  const float v = fmaxf(0, velocity);
-  const float a = clamp(acceleration, -amax, amax);
-  const float ramp = (a + amax) / jerk;
-  const float stop = (a + sqrtf(a*a + 2*jerk*v)) / jerk;
-  const float t = fminf(ramp, stop);
-  float distance = v*t + 0.5f*a*t*t - jerk*t*t*t/6;
-  if (stop > ramp) {
-    const float remaining_v = v + a*t - 0.5f*jerk*t*t;
-    distance += remaining_v*remaining_v / (2*amax);
+  const float v=fmaxf(0,velocity),a=clamp(acceleration,-amax,amax);
+  // Already braking too strongly to avoid reversing before acceleration is
+  // zero: ramp out immediately and return distance to the first velocity zero.
+  if(a<0 && v<a*a/(2*jerk)) {
+    const float t=2*v/(-a+sqrtf(fmaxf(0,a*a-2*jerk*v)));
+    return fmaxf(0,v*t+0.5f*a*t*t+jerk*t*t*t/6);
   }
-  return fmaxf(0, distance);
+  const float peak=fminf(amax,sqrtf(jerk*v+0.5f*a*a));
+  const float t1=fmaxf(0,(a+peak)/jerk);
+  const float v1=v+a*t1-0.5f*jerk*t1*t1;
+  const float hold=peak>0?fmaxf(0,(v1-peak*peak/(2*jerk))/peak):0;
+  const float d1=v*t1+0.5f*a*t1*t1-jerk*t1*t1*t1/6;
+  const float d2=v1*hold-0.5f*peak*hold*hold;
+  const float v2=v1-peak*hold,t3=peak/jerk;
+  return fmaxf(0,d1+d2+v2*t3-0.5f*peak*t3*t3+jerk*t3*t3*t3/6);
 }
 
 struct State {
@@ -53,14 +68,15 @@ inline State advance(State s, float x, float requested_accel,
   const float boundary = rail_half - 0.015f;
   const float jd = jerk*dt;
   float target = clamp(requested_accel, -drive_amax, drive_amax);
-  const float positive = fmaxf(0, velocityAccel(s.velocity, vmax, brake_amax, jerk, dt));
-  const float negative = fminf(0, velocityAccel(s.velocity, -vmax, brake_amax, jerk, dt));
+  // Signed bounds also decelerate an inherited velocity above a lower mode cap.
+  const float positive = settledVelocityAccel(s.velocity, s.acceleration, vmax, brake_amax, jerk, dt);
+  const float negative = settledVelocityAccel(s.velocity, s.acceleration, -vmax, brake_amax, jerk, dt);
   target = clamp(target, negative, positive);
   const float next_a = slew(s.acceleration, target, jd);
   const float next_v = s.velocity + next_a*dt;
 
-  if (s.brake_direction && s.velocity*s.brake_direction <= 0 &&
-      s.acceleration*s.brake_direction <= 0)
+  if (s.brake_direction && fabsf(s.velocity)<=0.005f &&
+      fabsf(s.acceleration)<=0.1f)
     s.brake_direction = 0;
 
   // Look ahead one tick before accepting an acceleration command. Test BOTH
@@ -70,6 +86,10 @@ inline State advance(State s, float x, float requested_accel,
       const float outward_v = next_v*direction;
       const float outward_a = next_a*direction;
       const float room = boundary - direction*x;
+      // A late/inherited stop may already lie beyond the normal boundary.
+      // Permit a gentle inward departure instead of relatching on residual
+      // sub-5 mm/s outward velocity while acceleration is already inward.
+      if(room<=0 && outward_v<=0.005f && outward_a<0) continue;
       const float travel = fmaxf(0, outward_v)*dt;
       if ((outward_v > 0 || outward_a > 0) &&
           travel + stoppingDistance(outward_v, outward_a, brake_amax, jerk) >= room) {
@@ -78,7 +98,9 @@ inline State advance(State s, float x, float requested_accel,
       }
     }
   }
-  if (s.brake_direction) target = -s.brake_direction*brake_amax;
+  // Hold the braking latch until both speed and acceleration are settled.
+  if (s.brake_direction)
+    target = settledVelocityAccel(s.velocity,s.acceleration,0,brake_amax,jerk,dt);
   // Account for velocity gained while acceleration ramps back to zero.
   // Without this anticipation, low-jerk reversals can overshoot vmax even
   // when the requested acceleration has already changed direction.

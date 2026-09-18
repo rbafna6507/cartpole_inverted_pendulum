@@ -1,30 +1,36 @@
-/* Offline, deterministic 175 mm pendulum model. See README for model boundaries. */
+/* Offline pendulum model; current 125 mm geometry uses the earlier free-decay captures. See README for model boundaries. */
 (function(root){
 'use strict';
 const PI=Math.PI, G=9.81, clamp=(x,l,h)=>Math.max(l,Math.min(h,x));
 const wrap=x=>Math.atan2(Math.sin(x),Math.cos(x));
 const slew=(x,y,d)=>x+clamp(y-x,-d,d);
 const styles={jerk:'Acceleration → jerk-limited DDS',trapezoid:'Acceleration → trapezoidal ramp',velocity:'Sampled velocity setpoints',position:'Streamed position targets'};
-const defaults={duration:20, scenario:'swing',style:'jerk',amax_s:12,amax_b:12,jmax:60,vmax:.8,
-  leff:0.165775567724757,controllerLength:0.166,damping:0.4022789826050984,coulomb:0,
+const defaults={duration:20, scenario:'swing',style:'jerk',amax_s:25,amax_b:25,jmax:100,vmax:1.5,vmax_s:1.5,vmax_b:1.5,approach_v:.3,catch_v:.3,approach_angle:.8,catch_da:4,
+  physicalLength:.125,leff:0.12445488778245432,controllerLength:.124,damping:0.9133833709022565,coulomb:0,
   rail:.15,pulleyTeeth:60,stepsPerM:200*16/.12,pulseMax:1000000/7/2,commandMs:10,positionGain:30,
-  tracking:1,lagMs:0,delayMs:0,bw:10,encoderMs:2,initialAngle:0,initialX:0,initialOmega:0,initialV:0,initialA:0,
-  ke:2,kpx:30,kdx:.5,phase_soft:1,catch_a:.6,catch_r:3,giveup:.8,
+  tracking:1,lagMs:0,delayMs:0,bw:50,encoderMs:1,encoderOffsetDeg:0,initialAngle:0,initialX:0,initialOmega:0,initialV:0,initialA:0,
+  ke:8,kpx:80,kdx:2,phase_soft:2,catch_a:.6,catch_r:3,giveup:.8,
+  spin_trip_rad_s:150,spin_resume_rad_s:10,
   pw:7,bal_pw:8,pz:.85,pc1:-.8,pc2:-1.2,manualSpeed:.15,frequency:.5,integrationDt:.001};
 function parameters(input={}){
   const p={...defaults,...input};
   const ranges={duration:[.1,120],amax_s:[.01,100],amax_b:[.01,100],jmax:[.1,100000],vmax:[.001,10],
-    bal_pw:[1,20],leff:[.01,1],controllerLength:[.01,1],damping:[0,10],coulomb:[0,20],rail:[.04,2],pulleyTeeth:[1,200],stepsPerM:[100,1e7],
+    vmax_s:[.01,10],vmax_b:[.01,10],approach_v:[.01,2],catch_v:[.01,2],approach_angle:[.65,1.5],catch_da:[.1,100],physicalLength:[.01,1],bal_pw:[1,20],leff:[.01,1],controllerLength:[.01,1],damping:[0,10],coulomb:[0,20],rail:[.04,2],pulleyTeeth:[1,200],stepsPerM:[100,1e7],
     pulseMax:[1,1e6],commandMs:[1,200],positionGain:[1,200],tracking:[0,1],lagMs:[0,200],delayMs:[0,100],
-    bw:[.1,100],encoderMs:[1,20],initialAngle:[-180,180],initialX:[-1,1],initialOmega:[-40,40],initialV:[-3,3],initialA:[-100,100],ke:[0,30],kpx:[0,200],kdx:[0,50],
+    bw:[.1,100],encoderMs:[1,20],encoderOffsetDeg:[-30,30],initialAngle:[-180,180],initialX:[-1,1],initialOmega:[-40,40],initialV:[-3,3],initialA:[-100,100],ke:[0,30],kpx:[0,200],kdx:[0,50],
     phase_soft:[.01,20],catch_a:[.01,1],catch_r:[.01,20],giveup:[.01,3],manualSpeed:[0,3],frequency:[.01,10],
     integrationDt:[.0001,.001]};
   for(const [key,[lo,hi]] of Object.entries(ranges))
     if(!Number.isFinite(p[key]) || p[key]<lo || p[key]>hi) throw Error(`${key} must be between ${lo} and ${hi}`);
+  if(!Number.isFinite(p.spin_trip_rad_s)||!Number.isFinite(p.spin_resume_rad_s)||p.spin_resume_rad_s<=0||p.spin_trip_rad_s<=p.spin_resume_rad_s)throw Error('Spin limits require 0 < resume < trip');
   if(!styles[p.style])throw Error('Unknown stepper input style');
   if(!['swing','balance','sine','reversal','decay','replay'].includes(p.scenario))throw Error('Unknown scenario');
   if(Math.abs(p.initialX)>=p.rail-.01)throw Error('Initial cart position must be inside the fault boundary');
   return p;
+}
+function estimate(measured,bandwidth,dt,angle,rate){
+  const w=2*PI*bandwidth,error=wrap(measured-angle);
+  return [wrap(angle+(rate+2*w*error)*dt),rate+w*w*error*dt];
 }
 function gains(p){
   const b1=2*p.pz*p.pw,b0=p.pw**2,c1=-(p.pc1+p.pc2),c0=p.pc1*p.pc2,L=p.controllerLength;
@@ -32,27 +38,38 @@ function gains(p){
   return [L*k3-G-L*(b0+b1*c1+c0),L*(k4-b1-c1),k3,k4];
 }
 function velocityAccel(v,target,amax,j,dt){const jd=j*dt;return Math.sign(target-v)*Math.min(amax,Math.sqrt(jd*jd+2*j*Math.abs(target-v))-jd);}
+function settledVelocityAccel(v,a,target,amax,j,dt){
+  const error=target-v,remaining=a*a/(2*j)+Math.abs(a)*dt;
+  if(a*error>0 && Math.abs(error)<=remaining)return 0;
+  return velocityAccel(v,target,amax,j,dt);
+}
 function stoppingDistance(v,a,amax,j){
   v=Math.max(0,v);a=clamp(a,-amax,amax);
-  const ramp=(a+amax)/j,stop=(a+Math.sqrt(a*a+2*j*v))/j,t=Math.min(ramp,stop);
-  let d=v*t+.5*a*t*t-j*t*t*t/6;
-  if(stop>ramp)d+=(v+a*t-.5*j*t*t)**2/(2*amax);
-  return Math.max(0,d);
+  if(a<0 && v<a*a/(2*j)){
+    const t=2*v/(-a+Math.sqrt(Math.max(0,a*a-2*j*v)));
+    return Math.max(0,v*t+.5*a*t*t+j*t*t*t/6);
+  }
+  const peak=Math.min(amax,Math.sqrt(j*v+.5*a*a)),t1=Math.max(0,(a+peak)/j);
+  const v1=v+a*t1-.5*j*t1*t1,hold=peak>0?Math.max(0,(v1-peak*peak/(2*j))/peak):0;
+  const d1=v*t1+.5*a*t1*t1-j*t1*t1*t1/6,d2=v1*hold-.5*peak*hold*hold;
+  const v2=v1-peak*hold,t3=peak/j;
+  return Math.max(0,d1+d2+v2*t3-.5*peak*t3*t3+j*t3*t3*t3/6);
 }
 // Port of swingup/cart_motion.h; parity is checked against the compiled C++ header.
 function advance(s,x,request,p,drive,dt){
   const brake=Math.max(p.amax_s,p.amax_b),j=p.style==='trapezoid'?1e12:p.jmax;
-  const positive=Math.max(0,velocityAccel(s.v,p.vmax,brake,j,dt));
-  const negative=Math.min(0,velocityAccel(s.v,-p.vmax,brake,j,dt));
+  const positive=settledVelocityAccel(s.v,s.a,p.vmax,brake,j,dt);
+  const negative=settledVelocityAccel(s.v,s.a,-p.vmax,brake,j,dt);
   let target=clamp(clamp(request,-drive,drive),negative,positive);
   const na=slew(s.a,target,j*dt),nv=s.v+na*dt;
   let dir=s.brake;
-  if(dir && s.v*dir<=0 && s.a*dir<=0)dir=0;
+  if(dir && Math.abs(s.v)<=.005 && Math.abs(s.a)<=.1)dir=0;
   if(!dir)for(const d of [-1,1]){
     const ov=nv*d,oa=na*d,room=p.rail-.015-d*x;
+    if(room<=0 && ov<=.005 && oa<0)continue;
     if((ov>0||oa>0) && Math.max(0,ov)*dt+stoppingDistance(ov,oa,brake,j)>=room){dir=d;break;}
   }
-  if(dir)target=-dir*brake;
+  if(dir)target=settledVelocityAccel(s.v,s.a,0,brake,j,dt);
   const ca=slew(s.a,target,j*dt),cv=s.v+ca*dt;
   if(ca>0 && cv+ca*ca/(2*j)>=p.vmax)target=Math.min(target,0);
   if(ca<0 && cv-ca*ca/(2*j)<=-p.vmax)target=Math.max(target,0);
@@ -67,30 +84,32 @@ class RailRecovery {
   update(x,s,dt){
     if(!this.phase)return false;
     this.elapsed+=dt;
+    const stopped=Math.abs(s.v)<=.005 && Math.abs(s.a)<=.1;
+    if(this.phase===1 && stopped)this.phase=2;
     const inward=s.v*this.side < -.005 || (s.v*this.side<=.005 && s.a*this.side<=0);
-    if(this.phase===1 && inward)this.phase=2;
-    if(this.phase===2 && inward && Math.abs(x)<=this.exitBoundary){this.reset();return true;}
+    const settled=Math.abs(s.v)<=.155 && Math.abs(s.a)<=1.5;
+    if(this.phase===2 && inward && settled && !s.brake && Math.abs(x)<=this.exitBoundary){this.reset();return true;}
     return false;
   }
   demand(x,s,vmax,amax,jerk,dt){
     const target=this.phase===2?-this.side*Math.min(.15,vmax):0;
-    return velocityAccel(s.v,target,this.phase===2?Math.min(1.5,amax):amax,jerk,dt);
+    return settledVelocityAccel(s.v,s.a,target,this.phase===2?Math.min(1.5,amax):amax,jerk,dt);
   }
 }
-const spinConfig={tripRadS:25,resumeRadS:10,timeoutUs:10000000};
-const spinTrigger=omega=>Math.abs(omega)>spinConfig.tripRadS;
+const spinConfig={tripRadS:150,resumeRadS:10,timeoutUs:10000000};
+const spinTrigger=(omega,trip=spinConfig.tripRadS)=>Math.abs(omega)>trip;
 class SpinRecovery {
   constructor(){this.reset();}
   reset(){this.phase=0;this.phaseStart=0;}
   begin(now){if(!this.phase){this.phase=1;this.phaseStart=now;}}
   timedOut(now){return this.phase!==0 && this.phase!==3 && ((now-this.phaseStart)>>>0)>spinConfig.timeoutUs;}
-  update(x,s,omega,valid,now){
+  update(x,s,omega,valid,now,resume=spinConfig.resumeRadS){
     if(!this.phase)return false;
     const cartQuiet=Math.abs(s.v)<=.005 && Math.abs(s.a)<=.1,centered=Math.abs(x)<=.003 && cartQuiet;
     if(this.phase===1 && cartQuiet)this.phase=2;
     if(this.phase===2 && centered)this.phase=3;
     if(this.phase===3 && !centered){this.phase=2;this.phaseStart=now;}
-    if(this.phase===3 && valid && Math.abs(omega)<spinConfig.resumeRadS){this.reset();return true;}
+    if(this.phase===3 && valid && Math.abs(omega)<resume){this.reset();return true;}
     return false;
   }
   demand(x,s,vmax,amax,jerk,dt){
@@ -98,13 +117,33 @@ class SpinRecovery {
     return velocityAccel(s.v,target,this.phase===1?amax:Math.min(.5,amax),jerk,dt);
   }
 }
+function approach(p,q,w,x,v,a,pump){
+  const inbound=q*w<0 || Math.abs(q)<.15;
+  const weight=inbound?clamp((p.approach_angle-Math.abs(q))/Math.max(.05,p.approach_angle-p.catch_a),0,1):0;
+  const k=gains(p),bal=-(k[0]*q+k[1]*w+k[2]*x+k[3]*v);
+  const request=(1-weight)*pump+weight*bal;
+  const cap=Math.min(p.vmax,p.vmax_s)*(1-weight)+Math.min(p.vmax,p.vmax_s,p.approach_v)*weight;
+  const upper=settledVelocityAccel(v,a,cap,p.amax_s,p.jmax,.001);
+  const lower=settledVelocityAccel(v,a,-cap,p.amax_s,p.jmax,.001);
+  return clamp(request,lower,upper);
+}
 function canCapture(p,theta,omega,x,v,acceleration){
   const k=gains(p),demand=-(k[0]*theta+k[1]*omega+k[2]*x+k[3]*v);
-  if(Math.abs(theta)>=p.catch_a || Math.abs(omega)>=p.catch_r || Math.abs(x)>=Math.min(.12,p.rail-.03) || Math.abs(v)>=.95*p.vmax || Math.abs(demand)>=p.amax_b)return false;
+  if(Math.abs(theta)>=p.catch_a || Math.abs(omega)>=p.catch_r || Math.abs(x)>=Math.min(.12,p.rail-.03) || Math.abs(v)>=Math.min(p.catch_v,p.vmax_b,p.vmax) || Math.abs(demand)>=p.amax_b || Math.abs(demand-acceleration)>p.catch_da)return false;
   if(Math.abs(theta)>.20 && theta*omega>0)return false;
-  const ramp=Math.min(.10,Math.abs(demand-acceleration)/p.jmax);
-  const alpha=(G*Math.sin(theta)-acceleration*Math.cos(theta))/p.controllerLength;
-  return Math.abs(theta+omega*ramp+.5*alpha*ramp*ramp)<p.giveup;
+  const initial=G/p.controllerLength*theta*theta+omega*omega;
+  let q=theta,w=omega,xx=x,ss={v,a:acceleration,brake:0};
+  const pp={...p,vmax:Math.min(p.vmax,p.vmax_b)};
+  for(let i=0;i<36;i++){
+    const d=-(k[0]*q+k[1]*w+k[2]*xx+k[3]*ss.v);
+    ss=advance(ss,xx,d,pp,p.amax_b,.005);
+    if(ss.brake)return false;
+    xx+=ss.v*.005;
+    const alpha=(G*Math.sin(q)-ss.a*Math.cos(q))/p.controllerLength;
+    q=wrap(q+w*.005+.5*alpha*.005*.005);w+=alpha*.005;
+    if(Math.abs(q)>=p.giveup || Math.abs(xx)>p.rail-.02)return false;
+  }
+  return G/p.controllerLength*q*q+w*w<=initial*1.05+.01;
 }
 function integrate(q,w,a,p,dt){
   const n=Math.ceil(dt/p.integrationDt),h=dt/n;
@@ -122,7 +161,7 @@ function simulate(input={},recorded=null){
   const replay=p.scenario==='replay';
   let q=wrap((p.scenario==='balance'?0:PI)+p.initialAngle*PI/180),w=p.initialOmega,x=p.initialX,actualV=p.initialV;
   if(replay)q=wrap(recorded.points[0][1]+PI);
-  let s={v:p.initialV,a:p.initialA,brake:0},hat=q,rate=p.initialOmega,measured=q,pulseX=x,pulsePhase=0;
+  let s={v:p.initialV,a:p.initialA,brake:0},hat=wrap(q+p.encoderOffsetDeg*PI/180),rate=p.initialOmega,measured=hat,pulseX=x,pulsePhase=0;
   let mode=p.scenario==='balance'?'balance':p.scenario==='swing'?'swing':p.scenario;
   const recovery=new RailRecovery(),spin=new SpinRecovery();
   const uprightOnly=p.scenario==='balance',uprightReturn=new SpinRecovery();
@@ -137,14 +176,13 @@ function simulate(input={},recorded=null){
   save(0,0,0,0);
   for(let i=0;i<Math.round(p.duration/dt);i++){
     const t=i*dt;
-    if(i%sensorPeriod===0)measured=wrap(Math.round(q*4096/(2*PI))*2*PI/4096);
+    if(i%sensorPeriod===0)measured=wrap(Math.round((q+p.encoderOffsetDeg*PI/180)*4096/(2*PI))*2*PI/4096);
     delayed.push(measured); const sensed=delayed.length>delay?delayed.shift():delayed[0];
-    const ew=2*PI*p.bw,error=wrap(sensed-hat);
-    hat=wrap(hat+(rate+2*ew*error)*dt);rate+=ew*ew*error*dt;
+    [hat,rate]=estimate(sensed,p.bw,dt,hat,rate);
     const balance=-(k[0]*hat+k[1]*rate+k[2]*pulseX+k[3]*s.v);
     const spinNow=i*1000;
     if(uprightOnly && mode==='balance' && Math.abs(wrap(sensed))>50*PI/180)returnUpright(t,'upright fall >50deg');
-    if(!uprightOnly && ['swing','balance','rail_brake','rail_return'].includes(mode) && spinTrigger(rate)){
+    if(!uprightOnly && ['swing','balance','rail_brake','rail_return'].includes(mode) && spinTrigger(rate,p.spin_trip_rad_s)){
       spin.begin(spinNow);recovery.reset();watch=false;quiet=0;elapsed=0;
       mode='spin_brake';summary.spinRecoveries++;events.push({t,event:'pendulum overspeed recovery'});
     }
@@ -176,11 +214,11 @@ function simulate(input={},recorded=null){
         mode='swing';quiet=0;elapsed=dt;
         const en=.5*p.controllerLength/G*rate*rate+Math.cos(hat);
         request=clamp(p.ke*(en-1)*Math.tanh(rate*Math.cos(hat)/p.phase_soft)-p.kpx*pulseX-p.kdx*s.v,-p.amax_s,p.amax_s);
-        events.push({t,event:'return inside complete'});
+        events.push({t,event:'return inside complete',x:pulseX,v:s.v,a:s.a});
       }else if(recovery.elapsed>8){summary.fault='Rail recovery timeout';events.push({t,event:summary.fault});break;}
       else {mode=recovery.phase===2?'rail_return':'rail_brake';request=recovery.demand(pulseX,s,p.vmax,Math.max(p.amax_s,p.amax_b),p.jmax,dt);}
     }else if(['spin_brake','spin_center','spin_wait'].includes(mode)){
-      if(spin.update(pulseX,s,rate,true,spinNow)){
+      if(spin.update(pulseX,s,rate,true,spinNow,p.spin_resume_rad_s)){
         mode='swing';quiet=0;elapsed=dt;
         watch=true;watchAngle=sensed;excursion=0;travel=0;watchElapsed=0;
         const en=.5*p.controllerLength/G*rate*rate+Math.cos(hat);
@@ -196,6 +234,7 @@ function simulate(input={},recorded=null){
       request=recorded.points[ri][4];
       if(t>recorded.points.at(-1)[0])break;
     }
+    if(mode==='swing')request=approach(p,hat,rate,pulseX,s.v,s.a,request);
     const drive=['bal_brake','bal_center','rail_brake','rail_return','spin_brake','spin_center','spin_wait'].includes(mode)?Math.max(p.amax_s,p.amax_b):mode==='balance'?p.amax_b:p.amax_s;
     // Experimental command adapters. No claim of matching a named driver library.
     if(p.style==='velocity'||p.style==='position'){
@@ -208,7 +247,7 @@ function simulate(input={},recorded=null){
       // Avoid accumulating inaccessible position targets while braking at a rail.
       if(s.brake)xTarget=pulseX;
     }
-    s=(mode==='decay'||mode==='idle')?{v:0,a:0,brake:0}:advance(s,pulseX,request,p,drive,dt);
+    s=(mode==='decay'||mode==='idle')?{v:0,a:0,brake:0}:advance(s,pulseX,request,{...p,vmax:Math.min(p.vmax,mode==='swing'?p.vmax_s:mode==='balance'?p.vmax_b:Math.max(p.vmax_s,p.vmax_b))},drive,dt);
     if(s.brake && (mode==='swing'||mode==='balance')){
       if(uprightOnly)returnUpright(t,'upright predictive rail protection');
       else {recovery.begin(pulseX,p.rail,s.brake);mode='rail_brake';summary.recoveries++;events.push({t,event:'predictive rail recovery'});}
@@ -258,6 +297,11 @@ function decay(capture,input={}){
   }
   return {points:result,rmseDeg:Math.sqrt(ss/result.length)*180/PI};
 }
-const api={defaults,styles,parameters,gains,velocityAccel,stoppingDistance,advance,RailRecovery,SpinRecovery,spinTrigger,spinConfig,canCapture,integrate,simulate,decay,wrap};
+function consoleCommands(input){
+  const p=parameters(input);
+  const names=['vmax','vmax_s','vmax_b','approach_v','catch_v','approach_angle','catch_da','amax_s','amax_b','jmax','ke','kpx','kdx','phase_soft','rail','pw','bal_pw','pz','pc1','pc2','catch_a','catch_r','giveup','bw'];
+  return ['stop',...names.map(k=>`set ${k} ${Number(p[k].toFixed(6))}`),`set leff ${Number(p.controllerLength.toFixed(6))}`,'params'].join('\n');
+}
+const api={estimate,approach,consoleCommands,defaults,styles,parameters,gains,velocityAccel,settledVelocityAccel,stoppingDistance,advance,RailRecovery,SpinRecovery,spinTrigger,spinConfig,canCapture,integrate,simulate,decay,wrap};
 if(typeof module!=='undefined')module.exports=api;else root.PendulumSim=api;
 })(typeof window==='undefined'?globalThis:window);

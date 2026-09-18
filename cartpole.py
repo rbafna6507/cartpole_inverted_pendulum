@@ -30,6 +30,7 @@ import time
 import tty
 from collections import deque
 from datetime import datetime
+from angle_plot import angle_series
 
 try:
     import serial
@@ -538,7 +539,7 @@ def dashboard(link, interactive=False, title=""):
 
     lines = {}
     lines["theta"], = ax[0].plot([], [], lw=1.4)
-    ax[0].set_ylabel("theta (rad)")
+    ax[0].set_ylabel("theta (rad)\n0 = upright")
     ax[0].axhline(0, color="k", lw=0.6)
     ax[0].axhspan(-math.radians(10), math.radians(10), color="tab:green", alpha=0.10)
     for limit in (-math.radians(50), math.radians(50)):
@@ -597,7 +598,10 @@ def dashboard(link, interactive=False, title=""):
             status.set_text(warning)
             return list(lines.values()) + [status]
         for key, ln in lines.items():
-            ln.set_data(t, d[key])
+            if key == "theta":
+                ln.set_data(*angle_series(t, d[key]))
+            else:
+                ln.set_data(t, d[key])
         for a in ax:
             a.set_xlim(-WINDOW_S, 0.4)
         for a, keys in ((ax[1], ["theta_dot"]), (ax[2], ["x", "v"]), (ax[3], ["accel"])):
@@ -699,7 +703,9 @@ HELP = """
 
   home        call the cart's current position x = 0
   zhome       call the current rail height z = 0
-  zero        re-zero the encoder (pendulum hanging and still)
+  zero        hanging still: save down and update upright half a turn away
+  upright     held straight up: save current encoder count as upright
+  upright N   save explicit upright count N (0..4095); survives reset
   mag         AS5600 magnet health (status + AGC)
   stat        one-shot state dump
   params      list every live-tunable parameter

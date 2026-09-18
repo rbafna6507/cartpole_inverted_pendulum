@@ -2,14 +2,22 @@
 
 ## Current configuration
 
-[175 mm / 14.2 g — 2026-09-15](175mm_14p2g/2026-09-15/README.md): **3 captures**, labeled Run 01–03, with raw CSV, plot, original metrics, configuration snapshot and per-run metadata.
+[125 mm / 11.05 g — earlier captures](125mm_11p05g/2026-09-15/README.md).
+The user confirmed that the original 100 mm label was wrong and identified
+these pre-175 mm recordings as the 125 mm arm, with two 5.85 g end weights.
+Seven recordings are catalogued; three supply 20 qualifying low-angle cycles.
+Raw recordings remain under their existing `legacy_geometry_unverified` paths
+so historical links and source hashes remain valid. The manifest records the
+corrected configuration separately from the original label.
 
-## Earlier captures
+## Archived 175 mm configuration
 
-[Legacy geometry unverified — 2026-09-15](legacy_geometry_unverified/2026-09-15/README.md): **7 captures** collected before the confirmed 175 mm configuration. Their exact geometry is not asserted. Keep them separate from the current calibration set.
+[175 mm / 14.2 g — 2026-09-15](175mm_14p2g/2026-09-15/README.md): three captures,
+33 fitted cycles. Historical geometry, measurements and files remain unchanged.
 
 ## Preservation
 
-Original CSV, PNG and metrics JSON contents and filenames are unchanged. [manifest.json](manifest.json) records original paths, organized paths, byte counts, SHA-256 hashes and missing artifacts. No original recording was deleted or regenerated.
-
-The capture tool's default output remains this top-level folder. Pass `--out pendulum_characterization/175mm_14p2g/2026-09-15` to place additional captures directly with the current configuration, changing the date as appropriate.
+Original CSV, PNG and metrics JSON contents and filenames are unchanged.
+[manifest.json](manifest.json) retains original/organized paths, byte counts,
+SHA-256 hashes and missing artifacts. No recording was deleted or regenerated.
+Future 125 mm captures should use a new date directory under `125mm_11p05g`.
