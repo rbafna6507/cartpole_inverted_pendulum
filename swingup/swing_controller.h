@@ -10,25 +10,26 @@ constexpr float kGravity = 9.81f;
 constexpr float kPi = 3.14159265358979323846f;
 inline float wrap(float x) { return atan2f(sinf(x), cosf(x)); }
 
+// Startup preset: analysis/v33_span_tuning/recommended_settings.json (full 270 mm span).
 struct Parameters {
   float leff = 0.124f;              // 125 mm arm: 20 low-angle cycles in three prior captures
-  float pw = 7.0f, pz = 0.85f;
+  float pw = 6.0f, pz = 0.85f;
   float bal_pw = 8.0f;             // upright-only trial; auto retains pw
-  float pc1 = -0.8f, pc2 = -1.2f;
+  float pc1 = -3.0f, pc2 = -4.0f;
   float vmax = cart_hardware::default_speed; // 750 RPM = 1.5 m/s on 60T
   // vmax is a hard command ceiling; these are independent policy limits.
   float vmax_s = 1.5f, vmax_b = 1.5f;
   float approach_v = 0.3f, catch_v = 0.3f;
-  float approach_angle = 0.8f, catch_da = 4.0f;
+  float approach_angle = 0.8f, catch_da = 2.0f;
   float amax_s = cart_hardware::default_acceleration; // 12,500 RPM/s on 60T
   float amax_b = cart_hardware::default_acceleration; // 25 m/s^2
-  float jmax = cart_hardware::default_jerk; // 50,000 RPM/s^2 = 100 m/s^3 on 60T
+  float jmax = cart_hardware::default_jerk; // 75,000 RPM/s^2 = 150 m/s^3 on 60T
   float amax_m = 0.5f, jmax_m = 10.0f;
-  float ke = 8.0f, kpx = 80.0f, kdx = 2.0f;
+  float ke = 4.0f, kpx = 40.0f, kdx = 2.0f;
   float phase_soft = 2.0f;          // rad/s scale of smooth phase feedback
-  float catch_a = 0.60f, catch_r = 3.0f, giveup = 0.80f;
+  float catch_a = 0.25f, catch_r = 2.0f, giveup = 0.80f;
   float spin_trip_rad_s=spin_recovery::trip_rad_s, spin_resume_rad_s=spin_recovery::resume_rad_s;
-  float rail = 0.150f, bw = 50.0f, vman = 0.05f;
+  float rail = 0.150f, bw = 30.0f, vman = 0.05f;
 };
 struct Gains { float k1, k2, k3, k4; };
 inline Gains gains(const Parameters &p) {

@@ -12,7 +12,7 @@ constexpr float mm_per_rev = pulley_teeth * belt_pitch_mm;
 // Linear limits stay fixed when pulley geometry changes (60T, 2026-09-17).
 constexpr float default_speed = 1.5f;         // m/s
 constexpr float default_acceleration = 25.0f; // m/s^2
-constexpr float default_jerk = 100.0f;         // m/s^3
+constexpr float default_jerk = 150.0f;         // m/s^3
 constexpr float requested_speed_rpm = default_speed * 60000.0f / mm_per_rev;
 constexpr float requested_acceleration_rpm_s = default_acceleration * 60000.0f / mm_per_rev;
 constexpr float requested_jerk_rpm_s2 = default_jerk * 60000.0f / mm_per_rev;

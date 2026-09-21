@@ -52,6 +52,8 @@ char*cmd=std::strtok(line," ");char*a1=std::strtok(nullptr," ");
 if(false){}
 ''' + setter + '\n}\n'
         harness += '''int main(){
+// Exercise validation from a known prior runtime setting, independent of boot defaults.
+p_bw=50;
 issue("set vmax 1.5");issue("set vmax 1.5001");assert(p_vmax==1.5f);
 issue("set vmax_s 1.5");issue("set vmax_s 2");assert(p_vmax_s==1.5f);
 issue("set vmax_b 1.5");issue("set vmax_b 2");assert(p_vmax_b==1.5f);

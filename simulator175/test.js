@@ -146,7 +146,8 @@ test('upright trial abort is latched, signed 50deg fall centers, and rail abort 
   assert.ok(fall.events.some(e=>e.event==='upright centered; stopped'));
   assert.ok(fall.trace.every(s=>!['swing','spin_wait'].includes(s.mode)));
   const end=fall.trace.at(-1);assert.equal(end.mode,'idle');assert.ok(Math.abs(end.pulseX)<=.003);assert.equal(end.v,0);
-  const rail=E.simulate({scenario:'balance',initialAngle:sign*10,duration:8});
+  // Seed outward cart momentum near the boundary to exercise the rail guard.
+  const rail=E.simulate({scenario:'balance',initialAngle:sign*10,initialX:sign*.12,initialV:sign*.3,duration:8});
   assert.ok(rail.events.some(e=>e.event==='upright predictive rail protection'));
   assert.equal(rail.trace.at(-1).mode,'idle');assert.ok(rail.trace.every(s=>s.mode!=='swing'));assert.equal(rail.summary.fault,null);
  }

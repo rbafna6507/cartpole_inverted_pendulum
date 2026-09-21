@@ -5,13 +5,13 @@ const PI=Math.PI, G=9.81, clamp=(x,l,h)=>Math.max(l,Math.min(h,x));
 const wrap=x=>Math.atan2(Math.sin(x),Math.cos(x));
 const slew=(x,y,d)=>x+clamp(y-x,-d,d);
 const styles={jerk:'Acceleration → jerk-limited DDS',trapezoid:'Acceleration → trapezoidal ramp',velocity:'Sampled velocity setpoints',position:'Streamed position targets'};
-const defaults={duration:20, scenario:'swing',style:'jerk',amax_s:25,amax_b:25,jmax:100,vmax:1.5,vmax_s:1.5,vmax_b:1.5,approach_v:.3,catch_v:.3,approach_angle:.8,catch_da:4,
+const defaults={duration:20, scenario:'swing',style:'jerk',amax_s:25,amax_b:25,jmax:150,vmax:1.5,vmax_s:1.5,vmax_b:1.5,approach_v:.3,catch_v:.3,approach_angle:.8,catch_da:2,
   physicalLength:.125,leff:0.12445488778245432,controllerLength:.124,damping:0.9133833709022565,coulomb:0,
   rail:.15,pulleyTeeth:60,stepsPerM:200*16/.12,pulseMax:1000000/7/2,commandMs:10,positionGain:30,
-  tracking:1,lagMs:0,delayMs:0,bw:50,encoderMs:1,encoderOffsetDeg:0,initialAngle:0,initialX:0,initialOmega:0,initialV:0,initialA:0,
-  ke:8,kpx:80,kdx:2,phase_soft:2,catch_a:.6,catch_r:3,giveup:.8,
+  tracking:1,lagMs:0,delayMs:0,bw:30,encoderMs:1,encoderOffsetDeg:0,initialAngle:0,initialX:0,initialOmega:0,initialV:0,initialA:0,
+  ke:4,kpx:40,kdx:2,phase_soft:2,catch_a:.25,catch_r:2,giveup:.8,
   spin_trip_rad_s:150,spin_resume_rad_s:10,
-  pw:7,bal_pw:8,pz:.85,pc1:-.8,pc2:-1.2,manualSpeed:.15,frequency:.5,integrationDt:.001};
+  pw:6,bal_pw:8,pz:.85,pc1:-3,pc2:-4,manualSpeed:.15,frequency:.5,integrationDt:.001};
 function parameters(input={}){
   const p={...defaults,...input};
   const ranges={duration:[.1,120],amax_s:[.01,100],amax_b:[.01,100],jmax:[.1,100000],vmax:[.001,10],

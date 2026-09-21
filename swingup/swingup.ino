@@ -850,7 +850,7 @@ static uint16_t tele_hz = 25;
 
 void printParams() {
   for (int i=0;i<N_PARAMS;i++) checkedPrintf("= %s %.5f\n", PARAMS[i].name, *PARAMS[i].ptr);
-  checkedPrintln(F("# firmware swingup-125mm-60t-v33"));
+  checkedPrintln(F("# firmware swingup-125mm-60t-v34"));
   checkedPrintf("# pins cart STEP=%d DIR=%d; Z1 STEP=%d DIR=%d; Z2 STEP=%d DIR=%d\n",
                 PIN_CART_STEP, PIN_CART_DIR, PIN_Z1_STEP, PIN_Z1_DIR, PIN_Z2_STEP, PIN_Z2_DIR);
   checkedPrintf("= cart_steps_per_m %.2f\n", CART_STEPS_PER_M);
@@ -1058,7 +1058,7 @@ void setup() {
   Serial.setTxBufferSize(4096);
   Serial.begin(115200);
   delay(300);
-  checkedPrintln(F("# ESP32 cart-pole swingup-125mm-60t-v33"));
+  checkedPrintln(F("# ESP32 cart-pole swingup-125mm-60t-v34"));
 
   // I2C comes up FIRST, while nothing else is competing for the CPU. Bringing
   // the 125 kHz step interrupt up first meant the very first bus transactions

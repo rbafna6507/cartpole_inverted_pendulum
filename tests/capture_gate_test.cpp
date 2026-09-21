@@ -15,9 +15,10 @@ int main(){
  assert(!swing_control::canCapture(p,k,.5844f,.018f,-.006f,-.479f,-.488f));
  // More available ceiling does not loosen the policy or capture criterion.
  const float demand=swing_control::approach(p,.7f,-2,.03f,.2f,-1,5,.001f);
+ const float swing_cap=p.vmax_s, balance_cap=p.vmax_b;
  p.vmax=2.0f;
- assert(swing_control::speedLimit(p,false)==.8f);
- assert(swing_control::speedLimit(p,true)==.8f);
+ assert(swing_control::speedLimit(p,false)==swing_cap);
+ assert(swing_control::speedLimit(p,true)==balance_cap);
  assert(swing_control::approach(p,.7f,-2,.03f,.2f,-1,5,.001f)==demand);
  assert(!swing_control::canCapture(p,k,.05f,-1,0,.31f,0));
  // Symmetric inbound preparation; command shaping doesn't change plant state.

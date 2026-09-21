@@ -9,11 +9,16 @@ paused during these tests.
 
 ## Run the swing-up sketch (125 mm arm, 60T pulley, 300 mm travel)
 
-**v33:** the user-authorized `jmax` ceiling is now **150 m/s³** (75,000 RPM/s²
-on the 60T pulley). The boot default remains 100; use `stop` then `set jmax 150`
-to select the new value. The other motion ceilings remain 1.5 m/s, 25 m/s²,
-and 150 rad/s for spin recovery. `bw` is adjustable from 0.1–100 Hz while stopped;
-its boot default is 50 Hz. Changing bandwidth resets the estimator in the control task.
+**v34:** startup now uses the [full-span hardware tuning preset](analysis/v33_span_tuning/recommended_settings.json):
+`ke=4`, `kpx=40`, `kdx=2`, `pw=6`, `pz=0.85`, `pc1=-3`, `pc2=-4`,
+`bw=30`, `catch_a=0.25`, `catch_r=2`, and `catch_da=2`.
+Motion defaults are `vmax=vmax_s=vmax_b=1.5`, `amax_s=amax_b=25`,
+`jmax=150`, and `spin_trip_rad_s=150`. Normal operating travel remains 270 mm.
+This preset achieved three 30-second holds, with variable capture latency;
+it is the supported full-span preset, not the experimental compact-span candidates.
+Manual upright mode retains `bal_pw=8` and uses the shared cart poles.
+`bw` remains adjustable from 0.1–100 Hz while stopped.
+Upload v34 manually to apply these defaults; this source update does not flash the board.
 
 v32 added a bounded startup kick from centered hanging rest, subject to the same
 jerk and rail protection. Physical tuning results and per-trial settings are in
@@ -38,7 +43,7 @@ there is **no homing movement**. The sketch boots idle with **all drivers disabl
 | Swing-up acceleration limit (`amax_s`) | 25 m/s² (12,500 RPM/s) |
 | Balance/braking acceleration limit (`amax_b`) | 25 m/s² (12,500 RPM/s) |
 | Manual acceleration limit (`amax_m`) | 0.5 m/s² |
-| Automatic jerk limit (`jmax`) | 100 m/s³ (50,000 RPM/s²) |
+| Automatic jerk limit (`jmax`) | 150 m/s³ (75,000 RPM/s²) |
 | Manual jerk limit (`jmax_m`) | 10 m/s³ |
 | Keyboard jog speed (`vman`) | 0.05 m/s |
 
@@ -64,22 +69,23 @@ energy buildup in many modeled cases. The approach to upright has its own slower
 On the incoming arc, `approach_angle=0.8` rad (46°) begins blending the energy
 pump into balance feedback and reducing planned speed toward `approach_v=0.3` m/s.
 Capture additionally requires speed below `catch_v=0.3` m/s, balance demand within
-`catch_da=4` m/s² of the current acceleration, and a feasible 180 ms forecast.
+`catch_da=2` m/s² of the current acceleration, and a feasible 180 ms forecast.
 The forecast checks jerk, speed, rail braking and angular divergence. It is a
 model-based gate, not a guarantee of motor tracking. Acceleration always passes
 through the shared jerk limiter, including handoff and return to a lower mode cap.
 
 Changes require `stop` first. For example, `set vmax_s 0.8`, `set vmax_b 0.8`,
-`set approach_v 0.3`, and `set catch_v 0.3`. Defaults now use the recent trial's
-`ke=8`, `kpx=80`, `kdx=2`, `phase_soft=2`; balance poles stay `pw=7`, `pz=0.85`.
+`set approach_v 0.3`, and `set catch_v 0.3`. The v26 trial used
+`ke=8`, `kpx=80`, `kdx=2`, `phase_soft=2`, `pw=7`, `pz=0.85`;
+v34 startup gains are listed above.
 [Evidence, validation and remaining limitations](analysis/v26/README.md).
 **v26 uploaded; firmware, defaults, IDLE and disabled output verified over serial. No physical motion trial yet.**
 
-### User-set motion ceilings (v33)
+### User-set motion ceilings (v34)
 
 Firmware enforces maximums of `spin_trip_rad_s 150`, `jmax 150`,
 `amax_s 25`, `amax_b 25`, and `vmax`, `vmax_s`, `vmax_b` all 1.5.
-Boot defaults match these except `jmax`, which remains 100. `bw` is independently
+Boot defaults match these. `bw` defaults to 30 Hz and is independently
 tunable. The trial runner reapplies and verifies its recorded settings before motion.
 Lower values remain manually configurable while stopped.
 
