@@ -1,0 +1,196 @@
+{
+  "quality": {
+    "samples": 61699,
+    "valid_samples": 61699,
+    "invalid_samples": 0,
+    "sample_rate_hz": 1000.0000000236469,
+    "interval_jitter_us_std": 0.03819316982515786,
+    "max_gap_ms": 1.0030000000824657,
+    "max_valid_gap_ms": 1.0030000000824657,
+    "sequence_gaps": 0,
+    "i2c_errors_total": 0,
+    "missed_slots_total": 0,
+    "tx_drops_total": 0,
+    "unwrap_continuous": true,
+    "magnet_status_samples": 1234,
+    "magnet_not_detected": 0,
+    "magnet_too_weak": 2,
+    "magnet_too_strong": 0,
+    "agc_min": 89.0,
+    "agc_max": 128.0,
+    "read_duration_median_us": 136.0,
+    "read_duration_p99_us": 136.0,
+    "timing_note": "MCU read-midpoint timestamps; not AS5600 conversion timestamps. Host arrival is logged separately and is not sensor latency."
+  },
+  "zero_raw": 1562.0063333308963,
+  "release_s": 1.698,
+  "calibration_applied": false,
+  "peak_recorded_angle_deg": 56.95256835958919,
+  "positive_peak_count": 9,
+  "negative_peak_count": 8,
+  "small_angle_period_estimate_s": 0.6897651800262071,
+  "period_rows": [
+    {
+      "side": "positive",
+      "time_s": 2.071000000000093,
+      "amplitude_deg": 46.8716769364106,
+      "period_s": 0.6980000000000004,
+      "finite_amplitude_corrected_period_s": 0.6688997739068884
+    },
+    {
+      "side": "positive",
+      "time_s": 2.7660000000000937,
+      "amplitude_deg": 34.331752763613125,
+      "period_s": 0.6920000000000011,
+      "finite_amplitude_corrected_period_s": 0.6764993992915174
+    },
+    {
+      "side": "positive",
+      "time_s": 3.4480000000000945,
+      "amplitude_deg": 28.573148129322664,
+      "period_s": 0.6720000000000006,
+      "finite_amplitude_corrected_period_s": 0.6615679192988004
+    },
+    {
+      "side": "positive",
+      "time_s": 4.155000000000095,
+      "amplitude_deg": 22.47930742692448,
+      "period_s": 0.7420000000000009,
+      "finite_amplitude_corrected_period_s": 0.7348671780866567
+    },
+    {
+      "side": "positive",
+      "time_s": 4.873000000000095,
+      "amplitude_deg": 16.88138209314143,
+      "period_s": 0.694,
+      "finite_amplitude_corrected_period_s": 0.6902362959976603
+    },
+    {
+      "side": "positive",
+      "time_s": 5.532000000000096,
+      "amplitude_deg": 12.620863638226648,
+      "period_s": 0.6240000000000006,
+      "finite_amplitude_corrected_period_s": 0.6221081433045899
+    },
+    {
+      "side": "positive",
+      "time_s": 6.2170000000000964,
+      "amplitude_deg": 9.598432934858987,
+      "period_s": 0.7460000000000013,
+      "finite_amplitude_corrected_period_s": 0.7446916891720958
+    },
+    {
+      "side": "positive",
+      "time_s": 6.903000000000098,
+      "amplitude_deg": 5.872741177894065,
+      "period_s": 0.6260000000000003,
+      "finite_amplitude_corrected_period_s": 0.62558897610798
+    },
+    {
+      "side": "negative",
+      "time_s": 2.4210000000000935,
+      "amplitude_deg": 28.5524928342963,
+      "period_s": 0.7060000000000008,
+      "finite_amplitude_corrected_period_s": 0.6950559260867082
+    },
+    {
+      "side": "negative",
+      "time_s": 3.1230000000000944,
+      "amplitude_deg": 24.90530400399577,
+      "period_s": 0.6980000000000008,
+      "finite_amplitude_corrected_period_s": 0.6897651800262071
+    },
+    {
+      "side": "negative",
+      "time_s": 3.8260000000000947,
+      "amplitude_deg": 20.922470944784283,
+      "period_s": 0.7080000000000002,
+      "finite_amplitude_corrected_period_s": 0.7021034753473343
+    },
+    {
+      "side": "negative",
+      "time_s": 4.507000000000096,
+      "amplitude_deg": 16.801815589712646,
+      "period_s": 0.6540000000000008,
+      "finite_amplitude_corrected_period_s": 0.6504865645151289
+    },
+    {
+      "side": "negative",
+      "time_s": 5.204000000000096,
+      "amplitude_deg": 14.007546771988313,
+      "period_s": 0.7400000000000002,
+      "finite_amplitude_corrected_period_s": 0.7372365208273431
+    },
+    {
+      "side": "negative",
+      "time_s": 5.911000000000096,
+      "amplitude_deg": 11.29735907849006,
+      "period_s": 0.6740000000000013,
+      "finite_amplitude_corrected_period_s": 0.672362576974991
+    },
+    {
+      "side": "negative",
+      "time_s": 6.592000000000097,
+      "amplitude_deg": 7.6511226233820455,
+      "period_s": 0.6880000000000006,
+      "finite_amplitude_corrected_period_s": 0.6872332862583099
+    }
+  ],
+  "same_side_log_decrements": [
+    0.4285424823726451,
+    0.1545432584380169,
+    0.21862364759423378,
+    0.2669595621718321,
+    0.31233351457921193,
+    0.2622405561250536,
+    0.288914564517488,
+    0.8471344025204778,
+    0.15005547825022328,
+    0.12132524007596994,
+    0.23759038400810312,
+    0.19665692289824227,
+    0.16420479889847647,
+    0.2784357954098672,
+    0.5587277348844094
+  ],
+  "opposite_side_growth_events": [
+    {
+      "time_s": 2.420000000000093,
+      "from_deg": 30.690711197298597,
+      "to_deg": 36.979355801541196
+    },
+    {
+      "time_s": 3.1120000000000942,
+      "from_deg": 26.414274471293997,
+      "to_deg": 31.684149725685053
+    },
+    {
+      "time_s": 3.784000000000095,
+      "from_deg": 23.39633353669754,
+      "to_deg": 25.462146532960276
+    }
+  ],
+  "warnings": [
+    "AS5600 magnet status flags present; inspect raw status and placement.",
+    "Some opposite-side turning amplitudes grow >2 deg: inspect zero, calibration, pivot motion or external forces."
+  ],
+  "notes": [
+    "Amplitude-corrected period assumes a simple gravity pendulum with weak damping.",
+    "Signed decrements are preserved; growing peaks are not silently discarded.",
+    "No motor torque, cart mass, COM or actual cart displacement is inferred from arm angle alone."
+  ],
+  "dynamics_fit": {
+    "w0_rad_s": 9.094541561935443,
+    "beta_per_s": 0.29953536264244973,
+    "gamma_rad_s2": 0.8646929782157723,
+    "offset_rad": 0.02225152272507636,
+    "period_small_angle_s": 0.6908743298812786,
+    "frequency_small_angle_hz": 1.4474412447367124,
+    "effective_length_m": 0.11856569505064372,
+    "fit_rms_deg": 1.921746744165072,
+    "optimizer_success": true,
+    "fit_start_relative_s": 0.3700000000000001,
+    "fit_end_relative_s": 5.590000000000005,
+    "note": "Provisional gravity + viscous + smooth dry-friction fit; no independent validation or parameter confidence intervals."
+  }
+}

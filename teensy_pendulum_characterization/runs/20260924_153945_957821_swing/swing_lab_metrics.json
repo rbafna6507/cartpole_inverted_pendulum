@@ -1,0 +1,235 @@
+{
+  "quality": {
+    "samples": 16101,
+    "valid_samples": 16101,
+    "invalid_samples": 0,
+    "sample_rate_hz": 1000.0000000236469,
+    "interval_jitter_us_std": 0.0498444787854589,
+    "max_gap_ms": 1.002999999855092,
+    "max_valid_gap_ms": 1.002999999855092,
+    "sequence_gaps": 0,
+    "i2c_errors_total": 0,
+    "missed_slots_total": 0,
+    "tx_drops_total": 0,
+    "unwrap_continuous": true,
+    "magnet_status_samples": 322,
+    "magnet_not_detected": 0,
+    "magnet_too_weak": 3,
+    "magnet_too_strong": 0,
+    "agc_min": 62.0,
+    "agc_max": 128.0,
+    "read_duration_median_us": 136.0,
+    "read_duration_p99_us": 136.0,
+    "timing_note": "MCU read-midpoint timestamps; not AS5600 conversion timestamps. Host arrival is logged separately and is not sensor latency."
+  },
+  "zero_raw": 1553.1196666352396,
+  "release_s": 4.221,
+  "calibration_applied": false,
+  "peak_recorded_angle_deg": 61.33713867463713,
+  "positive_peak_count": 10,
+  "negative_peak_count": 10,
+  "small_angle_period_estimate_s": 0.6937563637797032,
+  "period_rows": [
+    {
+      "side": "positive",
+      "time_s": 4.917999999999926,
+      "amplitude_deg": 54.41486760748968,
+      "period_s": 0.753999999999917,
+      "finite_amplitude_corrected_period_s": 0.7116762744380746
+    },
+    {
+      "side": "positive",
+      "time_s": 5.655999999999846,
+      "amplitude_deg": 44.086358633998366,
+      "period_s": 0.7219999999999205,
+      "finite_amplitude_corrected_period_s": 0.6953609802339504
+    },
+    {
+      "side": "positive",
+      "time_s": 6.373999999999766,
+      "amplitude_deg": 37.555241664186255,
+      "period_s": 0.7139999999999214,
+      "finite_amplitude_corrected_period_s": 0.694868792512303
+    },
+    {
+      "side": "positive",
+      "time_s": 7.055999999999692,
+      "amplitude_deg": 31.589971612906496,
+      "period_s": 0.6499999999999284,
+      "finite_amplitude_corrected_period_s": 0.6376695513459353
+    },
+    {
+      "side": "positive",
+      "time_s": 7.733999999999616,
+      "amplitude_deg": 25.942522769061597,
+      "period_s": 0.7059999999999214,
+      "finite_amplitude_corrected_period_s": 0.6969633153165207
+    },
+    {
+      "side": "positive",
+      "time_s": 8.459999999999535,
+      "amplitude_deg": 19.950586212367977,
+      "period_s": 0.7459999999999187,
+      "finite_amplitude_corrected_period_s": 0.7403504510404274
+    },
+    {
+      "side": "positive",
+      "time_s": 9.176999999999458,
+      "amplitude_deg": 14.35279693217835,
+      "period_s": 0.6879999999999242,
+      "finite_amplitude_corrected_period_s": 0.68530253906756
+    },
+    {
+      "side": "positive",
+      "time_s": 9.834999999999386,
+      "amplitude_deg": 10.467242196306575,
+      "period_s": 0.6279999999999308,
+      "finite_amplitude_corrected_period_s": 0.6266902642382823
+    },
+    {
+      "side": "positive",
+      "time_s": 10.477999999999314,
+      "amplitude_deg": 8.20535111174576,
+      "period_s": 0.6579999999999266,
+      "finite_amplitude_corrected_period_s": 0.6571566483806489
+    },
+    {
+      "side": "negative",
+      "time_s": 4.61399999999996,
+      "amplitude_deg": 33.023107068392676,
+      "period_s": 0.5979999999999341,
+      "finite_amplitude_corrected_period_s": 0.585605066306107
+    },
+    {
+      "side": "negative",
+      "time_s": 5.280999999999887,
+      "amplitude_deg": 33.333445327878316,
+      "period_s": 0.7359999999999189,
+      "finite_amplitude_corrected_period_s": 0.72045709790934
+    },
+    {
+      "side": "negative",
+      "time_s": 6.006999999999807,
+      "amplitude_deg": 29.16204198035708,
+      "period_s": 0.7159999999999211,
+      "finite_amplitude_corrected_period_s": 0.7044225723648739
+    },
+    {
+      "side": "negative",
+      "time_s": 6.724999999999728,
+      "amplitude_deg": 24.93213558522997,
+      "period_s": 0.7199999999999207,
+      "finite_amplitude_corrected_period_s": 0.7114873346594505
+    },
+    {
+      "side": "negative",
+      "time_s": 7.43599999999965,
+      "amplitude_deg": 20.62277388824922,
+      "period_s": 0.7019999999999227,
+      "finite_amplitude_corrected_period_s": 0.6963196309506183
+    },
+    {
+      "side": "negative",
+      "time_s": 8.113999999999574,
+      "amplitude_deg": 16.853544979588975,
+      "period_s": 0.653999999999928,
+      "finite_amplitude_corrected_period_s": 0.6504649065035711
+    },
+    {
+      "side": "negative",
+      "time_s": 8.7919999999995,
+      "amplitude_deg": 13.91750831162824,
+      "period_s": 0.7019999999999218,
+      "finite_amplitude_corrected_period_s": 0.6994120128387992
+    },
+    {
+      "side": "negative",
+      "time_s": 9.497999999999422,
+      "amplitude_deg": 11.233306855543782,
+      "period_s": 0.7099999999999227,
+      "finite_amplitude_corrected_period_s": 0.7082946178540186
+    },
+    {
+      "side": "negative",
+      "time_s": 10.198999999999344,
+      "amplitude_deg": 7.82638868119172,
+      "period_s": 0.6919999999999238,
+      "finite_amplitude_corrected_period_s": 0.691193096608788
+    }
+  ],
+  "same_side_log_decrements": [
+    0.25593366363595466,
+    0.15468527756722,
+    0.1669758361433671,
+    0.18010721635353638,
+    0.2175111804189171,
+    0.32169524854185605,
+    0.33991924646838395,
+    0.28262393417443954,
+    0.19377365800354598,
+    -0.1451115983431558,
+    0.1250513276907509,
+    0.1435776225739602,
+    0.1720884000067017,
+    0.21116751896804528,
+    0.19042710734662358,
+    0.1926078430414345,
+    0.24116607376923865,
+    0.5388106685715687
+  ],
+  "opposite_side_growth_events": [
+    {
+      "time_s": 4.540999999999968,
+      "from_deg": 30.631284796717395,
+      "to_deg": 61.34040396101074
+    },
+    {
+      "time_s": 5.294999999999885,
+      "from_deg": 35.414929340067964,
+      "to_deg": 47.48933125396862
+    },
+    {
+      "time_s": 6.016999999999806,
+      "from_deg": 31.251961315688668,
+      "to_deg": 40.68338601402811
+    },
+    {
+      "time_s": 6.730999999999727,
+      "from_deg": 27.072122645025495,
+      "to_deg": 34.4270973143444
+    },
+    {
+      "time_s": 7.380999999999656,
+      "from_deg": 22.792148525434452,
+      "to_deg": 28.752845911468594
+    },
+    {
+      "time_s": 8.086999999999577,
+      "from_deg": 18.453399251063992,
+      "to_deg": 23.132199626654604
+    }
+  ],
+  "warnings": [
+    "AS5600 magnet status flags present; inspect raw status and placement.",
+    "Some opposite-side turning amplitudes grow >2 deg: inspect zero, calibration, pivot motion or external forces."
+  ],
+  "notes": [
+    "Amplitude-corrected period assumes a simple gravity pendulum with weak damping.",
+    "Signed decrements are preserved; growing peaks are not silently discarded.",
+    "No motor torque, cart mass, COM or actual cart displacement is inferred from arm angle alone."
+  ],
+  "dynamics_fit": {
+    "w0_rad_s": 9.167845423855011,
+    "beta_per_s": 1.6025355726272522e-14,
+    "gamma_rad_s2": 1.2658854417779357,
+    "offset_rad": 0.042669050145222626,
+    "period_small_angle_s": 0.685350266795571,
+    "frequency_small_angle_hz": 1.4591079167089374,
+    "effective_length_m": 0.11667723029484711,
+    "fit_rms_deg": 7.742681007628069,
+    "optimizer_success": true,
+    "fit_start_relative_s": 0.09399999999998965,
+    "fit_end_relative_s": 6.6959999999992625,
+    "note": "Provisional gravity + viscous + smooth dry-friction fit; no independent validation or parameter confidence intervals."
+  }
+}

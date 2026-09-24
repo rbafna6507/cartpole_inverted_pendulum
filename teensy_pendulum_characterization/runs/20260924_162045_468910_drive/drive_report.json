@@ -1,0 +1,52 @@
+{
+  "quality": {
+    "samples": 24441,
+    "valid_samples": 24441,
+    "invalid_samples": 0,
+    "sample_rate_hz": 999.9999997962732,
+    "interval_jitter_us_std": 0.14445563146571497,
+    "max_gap_ms": 1.0030000003098394,
+    "max_valid_gap_ms": 1.0030000003098394,
+    "sequence_gaps": 0,
+    "i2c_errors_total": 0,
+    "missed_slots_total": 0,
+    "tx_drops_total": 0,
+    "unwrap_continuous": true,
+    "magnet_status_samples": 488,
+    "magnet_not_detected": 0,
+    "magnet_too_weak": 0,
+    "magnet_too_strong": 0,
+    "agc_min": 110.0,
+    "agc_max": 122.0,
+    "read_duration_median_us": 136.0,
+    "read_duration_p99_us": 136.0,
+    "timing_note": "MCU read-midpoint timestamps; not AS5600 conversion timestamps. Host arrival is logged separately and is not sensor latency."
+  },
+  "max_abs_commanded_position_mm": 19.9125,
+  "max_abs_commanded_speed_mm_s": 29.9977,
+  "max_abs_commanded_acceleration_mm_s2": 297.0001,
+  "warning": "These are commanded/pulse-derived quantities, not observed motor tracking or physical acceleration.",
+  "completed": true,
+  "fault": null,
+  "plan": {
+    "span_mm": 300.0,
+    "targets_mm": [
+      20.0,
+      0,
+      -20.0,
+      0,
+      20.0,
+      0,
+      -20.0,
+      0
+    ],
+    "speed_mm_s": 30.0,
+    "accel_mm_s2": 300.0,
+    "jerk_mm_s3": 3000.0,
+    "measured_position_source": "none; pulse-derived command only",
+    "manual_centre_operator_confirmed": true
+  },
+  "measured_final_displacement_mm": 0.0,
+  "measurement_note": "Ruler endpoint after drivers disabled. Record only if cart remained at its stopped position.",
+  "expected_final_displacement_mm": 0
+}

@@ -1,0 +1,270 @@
+{
+  "created_utc": "2026-09-24T20:21:04.939834+00:00",
+  "board": [
+    "I protocol=3 board=teensy41_characterization sample_hz=1000 sda=17 scl=16 conf=768 motor_control=1",
+    "I steps_per_m=26666.66601562 cart_step=2 cart_dir=3 enable=8 limits_connected=0 filter_write_ok=1",
+    "I home=0 enabled=0 travel_mm=300.000 vmax_mm_s=10.000 amax_mm_s2=100.000 jerk_mm_s3=1000.000"
+  ],
+  "command": "STREAM",
+  "events": [
+    {
+      "t_us": 4206938221,
+      "name": "INFO",
+      "detail": "",
+      "host_monotonic_ns": 758814586946666
+    },
+    {
+      "t_us": 4206939107,
+      "name": "OFF",
+      "detail": "",
+      "host_monotonic_ns": 758814587078250
+    },
+    {
+      "t_us": 4226404904,
+      "name": "STREAM",
+      "detail": "",
+      "host_monotonic_ns": 758814587259166
+    },
+    {
+      "t_us": 4226406827,
+      "name": "LIMITS",
+      "detail": "",
+      "host_monotonic_ns": 758814588798250
+    },
+    {
+      "t_us": 4226408435,
+      "name": "HOME",
+      "detail": "",
+      "host_monotonic_ns": 758814590333875
+    },
+    {
+      "t_us": 4226910242,
+      "name": "MOVE_ACCEPT",
+      "detail": "1 20.000",
+      "host_monotonic_ns": 758815091154375
+    },
+    {
+      "t_us": 4227896408,
+      "name": "MOVE_DONE",
+      "detail": "1",
+      "host_monotonic_ns": 758816077483541
+    },
+    {
+      "t_us": 4229897436,
+      "name": "MOVE_ACCEPT",
+      "detail": "2 0.000",
+      "host_monotonic_ns": 758818079018916
+    },
+    {
+      "t_us": 4230892408,
+      "name": "MOVE_DONE",
+      "detail": "2",
+      "host_monotonic_ns": 758819073330250
+    },
+    {
+      "t_us": 4232893436,
+      "name": "MOVE_ACCEPT",
+      "detail": "3 -20.000",
+      "host_monotonic_ns": 758821075075500
+    },
+    {
+      "t_us": 4233880408,
+      "name": "MOVE_DONE",
+      "detail": "3",
+      "host_monotonic_ns": 758822061369083
+    },
+    {
+      "t_us": 4235881436,
+      "name": "MOVE_ACCEPT",
+      "detail": "4 0.000",
+      "host_monotonic_ns": 758824063026041
+    },
+    {
+      "t_us": 4236876408,
+      "name": "MOVE_DONE",
+      "detail": "4",
+      "host_monotonic_ns": 758825057340291
+    },
+    {
+      "t_us": 4238877437,
+      "name": "MOVE_ACCEPT",
+      "detail": "5 20.000",
+      "host_monotonic_ns": 758827059054750
+    },
+    {
+      "t_us": 4239864407,
+      "name": "MOVE_DONE",
+      "detail": "5",
+      "host_monotonic_ns": 758828045359416
+    },
+    {
+      "t_us": 4241865437,
+      "name": "MOVE_ACCEPT",
+      "detail": "6 0.000",
+      "host_monotonic_ns": 758830047061708
+    },
+    {
+      "t_us": 4242860407,
+      "name": "MOVE_DONE",
+      "detail": "6",
+      "host_monotonic_ns": 758831041377541
+    },
+    {
+      "t_us": 4244861436,
+      "name": "MOVE_ACCEPT",
+      "detail": "7 -20.000",
+      "host_monotonic_ns": 758833043185333
+    },
+    {
+      "t_us": 4245848408,
+      "name": "MOVE_DONE",
+      "detail": "7",
+      "host_monotonic_ns": 758834029360291
+    },
+    {
+      "t_us": 4247849436,
+      "name": "MOVE_ACCEPT",
+      "detail": "8 0.000",
+      "host_monotonic_ns": 758836031042208
+    },
+    {
+      "t_us": 4248844407,
+      "name": "MOVE_DONE",
+      "detail": "8",
+      "host_monotonic_ns": 758837025402500
+    },
+    {
+      "t_us": 4250845436,
+      "name": "END",
+      "detail": "host_stop 0 0 0",
+      "host_monotonic_ns": 758839027075208
+    }
+  ],
+  "host_stop_reason": null,
+  "malformed_rows": 0,
+  "metadata": {
+    "equipment": {
+      "hardware": {
+        "pulley_teeth": 60,
+        "belt_pitch_mm": 2.0,
+        "motor_full_steps_per_rev": 200,
+        "microsteps": 16,
+        "nominal_steps_per_mm": 26.6666666667,
+        "cart_step": 2,
+        "cart_dir": 3,
+        "shared_enable": 8,
+        "sda": 17,
+        "scl": 16,
+        "i2c_bus": "Wire1",
+        "sample_hz": 1000,
+        "control_hz": 1000,
+        "pulse_period_us": 7,
+        "usable_cart_travel_mm": null,
+        "supply_voltage_v": null,
+        "driver_current_a": null
+      },
+      "pendulum_as_source": {
+        "arm_length_mm": 125,
+        "arm_mass_g": 11.05,
+        "tip_mass_each_g": 5.85,
+        "tip_count": 2,
+        "tip_mass_combined_g": 11.7,
+        "nominal_combined_mass_g": 22.75,
+        "confirmed_current_assembly": false,
+        "note": "Copied from supplied firmware comments; measure current assembly including hub. Do not reuse old 100 mm geometry silently."
+      },
+      "characterization_limits": {
+        "default_speed_mm_s": 30,
+        "default_accel_mm_s2": 300,
+        "default_jerk_mm_s3": 3000,
+        "ceiling_speed_mm_s": 250,
+        "ceiling_accel_mm_s2": 2000,
+        "ceiling_jerk_mm_s3": 20000
+      },
+      "source": "teensy_defaults_update.zip / teensy_swingup",
+      "notes": [
+        "Rail travel MUST be measured in guided homing, not taken from an old default.",
+        "Z pulse outputs remain LOW; shared ENABLE energizes/disables all three drivers. Secure vertical axes.",
+        "No encoder EEPROM writes, no swing-up/balance, no limit-switch inputs, no Ethernet transport in this build."
+      ]
+    },
+    "operator_note": "",
+    "experiment": "drive",
+    "plan": {
+      "span_mm": 300.0,
+      "targets_mm": [
+        20.0,
+        0,
+        -20.0,
+        0,
+        20.0,
+        0,
+        -20.0,
+        0
+      ],
+      "speed_mm_s": 30.0,
+      "accel_mm_s2": 300.0,
+      "jerk_mm_s3": 3000.0,
+      "measured_position_source": "none; pulse-derived command only",
+      "manual_centre_operator_confirmed": true
+    }
+  },
+  "data_csv": "drive.csv",
+  "host_commands": [
+    {
+      "command": "STREAM",
+      "host_send_monotonic_ns": 758814585273208
+    },
+    {
+      "command": "LIMITS 30.0 300.0 3000.0",
+      "host_send_monotonic_ns": 758814587273625
+    },
+    {
+      "command": "HOME 300.0",
+      "host_send_monotonic_ns": 758814588808958
+    },
+    {
+      "command": "MOVE 1 20.0",
+      "host_send_monotonic_ns": 758815090764250
+    },
+    {
+      "command": "MOVE 2 0",
+      "host_send_monotonic_ns": 758818077866375
+    },
+    {
+      "command": "MOVE 3 -20.0",
+      "host_send_monotonic_ns": 758821073894125
+    },
+    {
+      "command": "MOVE 4 0",
+      "host_send_monotonic_ns": 758824061864625
+    },
+    {
+      "command": "MOVE 5 20.0",
+      "host_send_monotonic_ns": 758827057950583
+    },
+    {
+      "command": "MOVE 6 0",
+      "host_send_monotonic_ns": 758830045864541
+    },
+    {
+      "command": "MOVE 7 -20.0",
+      "host_send_monotonic_ns": 758833041915916
+    },
+    {
+      "command": "MOVE 8 0",
+      "host_send_monotonic_ns": 758836029862416
+    },
+    {
+      "command": "STOP",
+      "host_send_monotonic_ns": 758839025916791
+    },
+    {
+      "command": "STOP",
+      "host_send_monotonic_ns": 758839027087750
+    }
+  ],
+  "rows": 24441,
+  "first_sample_t_us": 4226405339,
+  "release_s": null
+}

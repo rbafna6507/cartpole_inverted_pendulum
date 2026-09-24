@@ -1,0 +1,18 @@
+{
+  "span_mm": 300.0,
+  "targets_mm": [
+    20.0,
+    0,
+    -20.0,
+    0,
+    20.0,
+    0,
+    -20.0,
+    0
+  ],
+  "speed_mm_s": 30.0,
+  "accel_mm_s2": 300.0,
+  "jerk_mm_s3": 3000.0,
+  "measured_position_source": "none; pulse-derived command only",
+  "manual_centre_operator_confirmed": true
+}

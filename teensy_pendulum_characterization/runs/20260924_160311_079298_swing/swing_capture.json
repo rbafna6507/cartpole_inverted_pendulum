@@ -1,0 +1,108 @@
+{
+  "created_utc": "2026-09-24T20:03:28.955901+00:00",
+  "board": [
+    "I protocol=3 board=teensy41_characterization sample_hz=1000 sda=17 scl=16 conf=768 motor_control=1",
+    "I steps_per_m=26666.66601562 cart_step=2 cart_dir=3 enable=8 limits_connected=0 filter_write_ok=1",
+    "I home=0 enabled=0 travel_mm=300.000 vmax_mm_s=30.000 amax_mm_s2=300.000 jerk_mm_s3=3000.000"
+  ],
+  "command": "ARM",
+  "events": [
+    {
+      "t_us": 3159363968,
+      "name": "END",
+      "detail": "host_stop 0 0 0",
+      "host_monotonic_ns": 757758586925541
+    },
+    {
+      "t_us": 3170409066,
+      "name": "ARMED",
+      "detail": "",
+      "host_monotonic_ns": 757758587164666
+    },
+    {
+      "t_us": 3171209339,
+      "name": "HELD_release_now",
+      "detail": "",
+      "host_monotonic_ns": 757759387638625
+    },
+    {
+      "t_us": 3174577339,
+      "name": "RELEASE_auto",
+      "detail": "",
+      "host_monotonic_ns": 757762755567166
+    },
+    {
+      "t_us": 3188738339,
+      "name": "END",
+      "detail": "quiet 0 0 0",
+      "host_monotonic_ns": 757776917300000
+    }
+  ],
+  "host_stop_reason": null,
+  "malformed_rows": 0,
+  "metadata": {
+    "equipment": {
+      "hardware": {
+        "pulley_teeth": 60,
+        "belt_pitch_mm": 2.0,
+        "motor_full_steps_per_rev": 200,
+        "microsteps": 16,
+        "nominal_steps_per_mm": 26.6666666667,
+        "cart_step": 2,
+        "cart_dir": 3,
+        "shared_enable": 8,
+        "sda": 17,
+        "scl": 16,
+        "i2c_bus": "Wire1",
+        "sample_hz": 1000,
+        "control_hz": 1000,
+        "pulse_period_us": 7,
+        "usable_cart_travel_mm": null,
+        "supply_voltage_v": null,
+        "driver_current_a": null
+      },
+      "pendulum_as_source": {
+        "arm_length_mm": 125,
+        "arm_mass_g": 11.05,
+        "tip_mass_each_g": 5.85,
+        "tip_count": 2,
+        "tip_mass_combined_g": 11.7,
+        "nominal_combined_mass_g": 22.75,
+        "confirmed_current_assembly": false,
+        "note": "Copied from supplied firmware comments; measure current assembly including hub. Do not reuse old 100 mm geometry silently."
+      },
+      "characterization_limits": {
+        "default_speed_mm_s": 30,
+        "default_accel_mm_s2": 300,
+        "default_jerk_mm_s3": 3000,
+        "ceiling_speed_mm_s": 250,
+        "ceiling_accel_mm_s2": 2000,
+        "ceiling_jerk_mm_s3": 20000
+      },
+      "source": "teensy_defaults_update.zip / teensy_swingup",
+      "notes": [
+        "Rail travel MUST be measured in guided homing, not taken from an old default.",
+        "Z pulse outputs remain LOW; shared ENABLE energizes/disables all three drivers. Secure vertical axes.",
+        "No encoder EEPROM writes, no swing-up/balance, no limit-switch inputs, no Ethernet transport in this build."
+      ]
+    },
+    "operator_note": "",
+    "cart_fixed_operator_confirmed": true,
+    "nominal_release_angle_deg": -45.0,
+    "zero_raw": 1551.7246667018273
+  },
+  "data_csv": "swing.csv",
+  "host_commands": [
+    {
+      "command": "ARM",
+      "host_send_monotonic_ns": 757758586787333
+    },
+    {
+      "command": "STOP",
+      "host_send_monotonic_ns": 757776917313500
+    }
+  ],
+  "rows": 18330,
+  "first_sample_t_us": 3170409339,
+  "release_s": 4.168
+}

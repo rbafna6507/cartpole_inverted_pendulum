@@ -1,0 +1,30 @@
+{
+  "quality": {
+    "samples": 3000,
+    "valid_samples": 3000,
+    "invalid_samples": 0,
+    "sample_rate_hz": 999.9999997962732,
+    "interval_jitter_us_std": 2.2614778865443147e-07,
+    "max_gap_ms": 1.0000000002037268,
+    "max_valid_gap_ms": 1.0000000002037268,
+    "sequence_gaps": 0,
+    "i2c_errors_total": 0,
+    "missed_slots_total": 0,
+    "tx_drops_total": 0,
+    "unwrap_continuous": true,
+    "magnet_status_samples": 60,
+    "magnet_not_detected": 0,
+    "magnet_too_weak": 0,
+    "magnet_too_strong": 0,
+    "agc_min": 126.0,
+    "agc_max": 126.0,
+    "read_duration_median_us": 136.0,
+    "read_duration_p99_us": 136.0,
+    "timing_note": "MCU read-midpoint timestamps; not AS5600 conversion timestamps. Host arrival is logged separately and is not sensor latency."
+  },
+  "zero_raw": 1546.0303333225213,
+  "angle_std_deg": 0.015243358604223996,
+  "angle_peak_to_peak_deg": 0.17578125000001998,
+  "drift_deg_per_s": -0.00039654301281037306,
+  "note": "Noise statistics assume the pendulum was physically stationary; movement contributes to these values."
+}
