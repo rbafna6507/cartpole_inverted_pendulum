@@ -488,6 +488,11 @@ def dashboard(link, interactive=False, title=""):
     repeat stops the board coasts to zero on its own. That means a crashed or
     disconnected host cannot leave the cart driving into the end of the rail.
     """
+    if getattr(link, "text_mode", False) or (
+        sys.platform.startswith("linux")
+        and not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY")
+    ):
+        return text_dashboard(link, interactive)
     try:
         import matplotlib
         import matplotlib.pyplot as plt
@@ -524,7 +529,18 @@ def dashboard(link, interactive=False, title=""):
         if k == held["key"]:
             held["key"] = None
 
-    fig, ax = plt.subplots(5, 1, figsize=(10, 9), sharex=True)
+    try:
+        fig, ax = plt.subplots(5, 1, figsize=(10, 9), sharex=True)
+    except (ImportError, RuntimeError) as exc:
+        print(f"  Graphical dashboard unavailable ({exc}); using text dashboard.")
+        return text_dashboard(link, interactive)
+    # Agg/PDF/SVG/inline canvases cannot run a desktop GUI event loop.
+    # Detect before registering close handlers; closing this unused figure must
+    # not send STOP. Real GUI close/EOF and watchdog stops remain in force.
+    if not getattr(fig.canvas, "required_interactive_framework", None):
+        plt.close(fig)
+        print("  Non-interactive plotting backend; using text dashboard.")
+        return text_dashboard(link, interactive)
     fig.canvas.manager.set_window_title("cart-pole" + (f" -- {title}" if title else ""))
 
     # Stop keys work in every plot, including read-only/automatic dashboards.
@@ -639,7 +655,7 @@ def dashboard(link, interactive=False, title=""):
         worker = threading.Thread(target=pump, daemon=True)
         worker.start()
         try:
-            plt.show()
+            plt.show(block=True)
         except KeyboardInterrupt:
             stop_motion()
         finally:
@@ -771,6 +787,7 @@ def repl(link):
 def main():
     ap = argparse.ArgumentParser(description="ESP32 cart-pole console")
     ap.add_argument("--port", help="serial device, e.g. /dev/cu.usbserial-0001")
+    ap.add_argument("--text", action="store_true", help="terminal dashboard; use on Jetson/SSH without a GUI")
     ap.add_argument("--host", help="Teensy Ethernet IP; mutually exclusive with --port")
     ap.add_argument("--tcp-port", type=int, default=9000)
     ap.add_argument("--baud", type=int, default=115200)
@@ -795,6 +812,7 @@ def main():
     if args.legacy_serial:
         print("Legacy serial: damaged numeric replies cannot be reliably detected.")
     link = Link(args.port, args.baud, args.logdir, require_checksum=not args.legacy_serial)
+    link.text_mode = args.text
     link.send(f"rate {args.rate}")
     try:
         repl(link)
